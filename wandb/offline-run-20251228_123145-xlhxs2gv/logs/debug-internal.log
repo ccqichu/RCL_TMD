@@ -1,0 +1,12 @@
+{"time":"2025-12-28T12:31:45.507093394+08:00","level":"INFO","msg":"stream: starting","core version":"0.23.1"}
+{"time":"2025-12-28T12:31:45.646119774+08:00","level":"WARN","msg":"featurechecker: GraphQL client is nil, skipping feature loading"}
+{"time":"2025-12-28T12:31:45.646243826+08:00","level":"INFO","msg":"stream: created new stream","id":"xlhxs2gv"}
+{"time":"2025-12-28T12:31:45.646339266+08:00","level":"INFO","msg":"handler: started","stream_id":"xlhxs2gv"}
+{"time":"2025-12-28T12:31:45.646509181+08:00","level":"INFO","msg":"stream: started","id":"xlhxs2gv"}
+{"time":"2025-12-28T12:31:45.646546012+08:00","level":"INFO","msg":"writer: started","stream_id":"xlhxs2gv"}
+{"time":"2025-12-28T12:31:45.646595192+08:00","level":"INFO","msg":"sender: started","stream_id":"xlhxs2gv"}
+{"time":"2025-12-28T12:31:45.64771272+08:00","level":"WARN","msg":"runupserter: server does not expand metric globs but the x_server_side_expand_glob_metrics setting is set; ignoring"}
+{"time":"2025-12-28T12:42:53.307293675+08:00","level":"INFO","msg":"stream: closing","id":"xlhxs2gv"}
+{"time":"2025-12-28T12:42:53.418587455+08:00","level":"INFO","msg":"handler: closed","stream_id":"xlhxs2gv"}
+{"time":"2025-12-28T12:42:53.418709209+08:00","level":"INFO","msg":"sender: closed","stream_id":"xlhxs2gv"}
+{"time":"2025-12-28T12:42:53.41874897+08:00","level":"INFO","msg":"stream: closed","id":"xlhxs2gv"}

@@ -25,7 +25,7 @@ class MultimodalEncoder(nn.Module):
         all_encoder_attentions = []
         for layer_module in self.layer:
 
-            hidden_states, attention = layer_module(hidden_states, attention_mask, output_attentions=True)
+            hidden_states, attention = layer_module(hidden_states, attention_mask, output_attentions=False)
             all_encoder_attentions.append(attention)
 
             if output_all_encoded_layers:
@@ -46,14 +46,24 @@ class CrossAttention(nn.Module):
         self.dropout = nn.Dropout(dropout_prob)
 
     def forward(self, query, key, value):
+        # Ensure per-sample attention only: [B, D] -> [B, 1, D]
+        # squeeze_back = False
+        # if query.dim() == 2:
+        #     query = query.unsqueeze(1)
+        #     key = key.unsqueeze(1)
+        #     value = value.unsqueeze(1)
+        #     squeeze_back = True
+
         if query.shape[-1] != 768:
             query = self.text_linear(query)
         if key.shape[-1] != 768:
             key = self.extra_linear(key)
             value = self.extra_linear(value)
+
         query = self.query_proj(query)
         key = self.key_proj(key)
         value = self.value_proj(value)
+
         attention_scores = torch.matmul(query, key.transpose(-1, -2))
         attention_scores = attention_scores / torch.sqrt(
             torch.tensor(key.size(-1), dtype=torch.float32)
@@ -61,17 +71,16 @@ class CrossAttention(nn.Module):
         attention_weights = F.softmax(attention_scores, dim=-1)
         attended_values = torch.matmul(attention_weights, value)
         attended_values = self.dropout(attended_values)
-        return attended_values
 
+        # if squeeze_back:
+        #     attended_values = attended_values.squeeze(1)
+
+        return attended_values
 
 class RCLMuFN(nn.Module):
     def __init__(self, args):
         super(RCLMuFN, self).__init__()
         self.model = CLIPModel.from_pretrained("/home/user/chengtaiyu/models/clip-vit-base-patch32")
-        # self.config = BertConfig.from_pretrained("/home/user/chengtaiyu/models/bert-base-uncased")
-        # self.config.hidden_size = 768
-        # self.config.num_attention_heads = 8
-        # self.trans = MultimodalEncoder(self.config, layer_number=args.layers)
         if args.simple_linear:
             self.text_linear =  nn.Linear(args.text_size, args.image_size)
             self.image_linear =  nn.Linear(args.image_size, args.image_size)
@@ -89,16 +98,9 @@ class RCLMuFN(nn.Module):
         self.classifier_fuse = nn.Linear(args.image_size , args.label_number)
         self.cross_att = CrossAttention(feature_dim=768, dropout_prob=0.1)
         self.loss_fct = nn.CrossEntropyLoss()
-        # self.tokenizer = BertTokenizer.from_pretrained("/home/user/chengtaiyu/models/bert-base-uncased")
-        # self.bert_model = BertModel.from_pretrained("/home/user/chengtaiyu/models/bert-base-uncased")
-        # self.backbone = build_backbone(args)
         self.d_model = 768
         self.nheads = 8
         self.dim_feedforward = 2048
-        # self.txt = nn.Sequential(nn.Linear(self.d_model, self.d_model),
-        #                          nn.ReLU(),
-        #                          nn.LayerNorm(self.d_model)
-        #                          )
         self.txt2 = nn.Sequential(nn.Linear(self.d_model*2, self.d_model),
                                  nn.ReLU(),
                                  nn.Linear(self.d_model, self.d_model),
@@ -109,11 +111,6 @@ class RCLMuFN(nn.Module):
                                   nn.Linear(self.d_model, self.d_model),
                                  nn.LayerNorm(self.d_model)
                                  )
-        # self.text_self = TransformerEncoderLayer(self.d_model, self.nheads, dim_feedforward=self.dim_feedforward)
-        # self.text_cross = TransformerCrossLayer(self.d_model, self.nheads, dim_feedforward=self.dim_feedforward)
-        # self.vis_self = TransformerEncoderLayer(self.d_model, self.nheads, dim_feedforward=self.dim_feedforward)
-        # self.vis_cross = TransformerCrossLayer(self.d_model, self.nheads, dim_feedforward=self.dim_feedforward)
-        # self.imtxt_cross = TransformerCrossLayer(768, self.nheads, dim_feedforward=self.dim_feedforward)
         self.attetion_block = nn.Sequential(nn.Linear(self.d_model * 2, self.d_model),
                                             nn.ReLU(),
                                             nn.Linear(self.d_model, self.d_model),
@@ -122,8 +119,6 @@ class RCLMuFN(nn.Module):
                                        nn.ReLU(),
                                        nn.Linear(self.d_model, self.d_model),
                                        nn.LayerNorm(self.d_model))
-        # self.input_proj = nn.Conv2d(self.dim_feedforward, 768, kernel_size=1)
-        # self.pool = nn.AdaptiveAvgPool2d((1, 1))
 
     def forward(self, inputs, batch, labels):
         output = self.model(**inputs,output_attentions=True)
@@ -136,46 +131,13 @@ class RCLMuFN(nn.Module):
         text_feature = self.text_linear(text_feature)  # 64，768
         image_feature = self.image_linear(image_feature)  # 64,768
 
-        text_list, image_list, label_list, id_list, samples = batch
+        text_list, image_list, label_list, id_list = batch
 
-        # features, pos = self.backbone(samples.to(inputs['input_ids'].device) )
-        # src, mask = features[-1].decompose()  # 32,2048,7,7
-
-        # # resnet50
-        # src = self.input_proj(src)  # 64,768,7,7
-        # pooled_features = self.pool(src)  # [batch_size, 768, 1, 1]
-        # res_features = pooled_features.view(pooled_features.size(0), -1)  # [32, 768]
-        # # bert
-        # encoded_input = self.tokenizer(text_list, padding=True, truncation=True, return_tensors='pt')
-        # encoded_input = encoded_input.to(inputs['input_ids'].device)
-        # with torch.no_grad():
-        #     outputs_bert = self.bert_model(**encoded_input)
-        #     last_hidden_states = outputs_bert.last_hidden_state  # 64,56,768
-        #     pooler_outputs = outputs_bert.pooler_output  # 64,768
-        # bert_text_features = self.txt(pooler_outputs)  # 64,768
-
-        # # SFIM
-        # image_t = self.imtxt_cross(tgt=res_features, memory=bert_text_features)  # 32,768
-        # text_im = self.imtxt_cross(tgt=bert_text_features, memory=res_features)  # 32,768
-
-        # # RCLM
-        # text_feature2 = self.txt2(torch.cat([text_feature, text_im], dim=-1))  # 32,768
-        # text_feature2 = text_feature2.unsqueeze(1)  # 32,1,768
-        # txt_cat = self.text_self(torch.stack([text_feature, text_im], dim=1))  # 32,2,768
-        # txt_output = self.text_cross(tgt=text_feature2, memory=txt_cat)  # 32,1,768
-        # txt_output = txt_output.squeeze(1)  # 32,768
-
-        # image_feature2 = self.vis2(torch.cat([image_feature, image_t],dim=-1))  # 32,768
-        # image_feature2 = image_feature2.unsqueeze(1)  # 32,1,768
-        # image_cat = self.vis_self(torch.stack([image_feature, image_t], dim=1))  # 32,2,768
-        # image_output = self.vis_cross(tgt=image_feature2, memory=image_cat)  # 32,1,768
-        # image_output = image_output.squeeze(1)  # 32,768
         txt_output = text_feature
         image_output = image_feature
         txt_out = self.cross_att(txt_output, image_output, image_output)  # 32,768
         image_out = self.cross_att(image_output, txt_output, txt_output)  # 32,768
         res_bert = 0.6 * image_out + 0.4 * txt_out  # 32,768
-        # res_bert = image_t + text_im
 
         # CLIP-View Feature Fusion
         cross_feature_text = self.cross_att(text_feature, image_feature, image_feature)  # 32,768

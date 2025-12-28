@@ -14,7 +14,8 @@ from sklearn import metrics
 
 def predict(args, model, device, data, processor, pre = None):
 
-    data_loader = DataLoader(data, batch_size=args.test_batch_size, collate_fn=MyDataset.collate_func,shuffle=False)
+    data_loader = DataLoader(data, batch_size=args.test_batch_size, collate_fn=MyDataset.collate_func, shuffle=False,
+                             num_workers=4, pin_memory=True)
     n_correct, n_total = 0, 0
     t_targets_all, t_outputs_all = None, None
 
@@ -26,11 +27,11 @@ def predict(args, model, device, data, processor, pre = None):
     with open(pre,'w',encoding='utf-8') as fout:
         with torch.no_grad():
             for i_batch, t_batch in enumerate(data_loader):
-                text_list, image_list, label_list, id_list, samples = t_batch
+                text_list, image_list, label_list, id_list = t_batch
                 image.extend(id_list)
                 text.extend(text_list)
-                inputs = processor(text=text_list, images=image_list, padding='max_length', truncation=True, max_length=args.max_len, return_tensors="pt").to(device)
-                labels = torch.tensor(label_list).to(device)
+                inputs = processor(text=text_list, images=image_list, padding='max_length', truncation=True, max_length=args.max_len, return_tensors="pt").to(device, non_blocking=True)
+                labels = torch.tensor(label_list).to(device, non_blocking=True)
 
                 t_targets = labels
                 loss, t_outputs = model(inputs,t_batch, labels=labels)
@@ -65,16 +66,16 @@ def predict(args, model, device, data, processor, pre = None):
 
 def set_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--device', default='0', type=str, help='device number')
+    parser.add_argument('--device', default='1', type=str, help='device number')
     parser.add_argument('--max_len', type=int, default=77, help='max length of text')
     parser.add_argument('--text_size', default=512, type=int, help='text hidden size')
     parser.add_argument('--image_size', default=768, type=int, help='image hidden size')
     parser.add_argument('--dropout_rate', default=0.5, type=float, help='dropout rate')
     parser.add_argument('--label_number', type=int, default=2, help='number of classification labels')
     parser.add_argument('--test_batch_size', type=int, default=200, help='batch size for text phase')
-    parser.add_argument('--model_path', type=str, default="./MMSDL/output_dir/RCLMuFN/", help='save model dpath')
+    parser.add_argument('--model_path', type=str, default="/home/user/chengtaiyu/RCL-base/output_dir/RCLMuFN", help='save model dpath')
     parser.add_argument('--save_file', type=str, default="result.json", help='save result path')
-    parser.add_argument('--text_name', default='text_json_final', type=str, help='the text data folder name')
+    parser.add_argument('--text_name', default='text_final', type=str, help='the text data folder name')
     parser.add_argument('--layers', default=3, type=int, help='number of layers of transformers')
     parser.add_argument('--simple_linear', default=False, type=bool, help='linear implementation choice')
 
@@ -101,12 +102,12 @@ def main():
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device
     device = torch.device("cuda" if torch.cuda.is_available() and int(args.device) >= 0 else "cpu")
 
-    processor = CLIPProcessor.from_pretrained("./MMSD2.0-main/openai/clip-vit-base-patch32")
+    processor = CLIPProcessor.from_pretrained("/home/user/chengtaiyu/models/clip-vit-base-patch32")
     model = RCLMuFN(args)
     test_data = MyDataset(mode='test', text_name=args.text_name, limit=None)
 
     model.load_state_dict(torch.load(os.path.join(args.model_path, "model.pt"), map_location="cpu"))
-    model.to(device)
+    model.to(device, non_blocking=True)
     model.eval()
 
     predict(args, model, device, test_data, processor, pre=args.save_file)

@@ -19,8 +19,8 @@ def set_args():
     parser.add_argument('--text_name', default='text_final', type=str, help='the text data folder name')
     parser.add_argument('--simple_linear', default=False, type=bool, help='linear implementation choice')
     parser.add_argument('--num_train_epochs', default=10, type=int, help='number of train epoched')
-    parser.add_argument('--train_batch_size', default=64, type=int, help='batch size in train phase')
-    parser.add_argument('--dev_batch_size', default=64, type=int, help='batch size in dev phase')
+    parser.add_argument('--train_batch_size', default=1, type=int, help='batch size in train phase')
+    parser.add_argument('--dev_batch_size', default=1, type=int, help='batch size in dev phase')
     parser.add_argument('--label_number', default=2, type=int, help='the number of classification labels') # 仇恨，非仇恨
     parser.add_argument('--text_size', default=512, type=int, help='text hidden size')
     parser.add_argument('--image_size', default=768, type=int, help='image hidden size')
@@ -39,7 +39,7 @@ def set_args():
     parser.add_argument('--limit', default=None, type=int, help='the limited number of training examples')
     parser.add_argument('--seed', type=int, default=42, help='random seed')
 
-
+              
     # * Backbone
     parser.add_argument('--lr_backbone', default=1e-5, type=float)
     parser.add_argument('--backbone', default='resnet50', type=str,
@@ -96,7 +96,7 @@ def main():
     else:
         raise RuntimeError('Error model name!')
 
-    model.to(device)
+    model.to(device, non_blocking=True)
     wandb.watch(model, log="all")
 
     train(args, model, device, train_data, dev_data, test_data, processor)
