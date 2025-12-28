@@ -266,11 +266,11 @@ class NestedTensor(object):
         self.mask = mask
 
     def to(self, device):
-        cast_tensor = self.tensors.to(device)
+        cast_tensor = self.tensors.to(device, non_blocking=True)
         mask = self.mask
         if mask is not None:
             assert mask is not None
-            cast_mask = mask.to(device)
+            cast_mask = mask.to(device, non_blocking=True)
         else:
             cast_mask = None
         return NestedTensor(cast_tensor, cast_mask)

@@ -52,6 +52,24 @@ def make_neg_index(batch_size: int, device):
     return idx
 
 
+def align_attention_mask(attn_mask: torch.Tensor, seq_len: int):
+    """
+    Align attention mask length to sequence length.
+    Pads with 0 (mask) or truncates as needed.
+    """
+    if attn_mask.size(1) > seq_len:
+        return attn_mask[:, :seq_len]
+    if attn_mask.size(1) < seq_len:
+        batch_size = attn_mask.size(0)
+        extra_len = seq_len - attn_mask.size(1)
+        extra_pad = torch.zeros(batch_size, extra_len,
+                                dtype=attn_mask.dtype,
+                                device=attn_mask.device)
+        return torch.cat([attn_mask, extra_pad], dim=1)
+    return attn_mask
+
+
+
 class MultimodalEncoder(nn.Module):
     def __init__(self, config, layer_number):
         super(MultimodalEncoder, self).__init__()
@@ -63,7 +81,6 @@ class MultimodalEncoder(nn.Module):
         all_encoder_attentions = []
         for layer_module in self.layer:
 
-            hidden_states, attention = layer_module(hidden_states, attention_mask, output_attentions=True)
             all_encoder_attentions.append(attention)
 
             if output_all_encoded_layers:
@@ -84,6 +101,13 @@ class CrossAttention(nn.Module):
         self.dropout = nn.Dropout(dropout_prob)
 
     def forward(self, query, key, value):
+        # # Avoid cross-sample attention when inputs are [B, D]
+        # squeezed = False
+        # if query.dim() == 2:
+        #     query = query.unsqueeze(1)
+        #     key = key.unsqueeze(1)
+        #     value = value.unsqueeze(1)
+        #     squeezed = True
         if query.shape[-1] != 768:
             query = self.text_linear(query)
         if key.shape[-1] != 768:
@@ -97,6 +121,8 @@ class CrossAttention(nn.Module):
         attention_weights = F.softmax(attention_scores, dim=-1)
         attended_values = torch.matmul(attention_weights, value)
         attended_values = self.dropout(attended_values)
+        # if squeezed:
+        #     attended_values = attended_values.squeeze(1)
         return attended_values
 
 
@@ -168,12 +194,14 @@ class CIDModule(nn.Module):
         # 4. Compute alignment scores
         # A = T @ V^T / tau -> [B, Lt, Lv]
         A = torch.matmul(T, V.transpose(1, 2)) / tau  # [B, Lt, Lv]
-
+        A = A.masked_fill(pad_mask.unsqueeze(-1), -1e4)
         # s_v = max over text tokens -> [B, Lv]
         s_v = A.max(dim=1).values  # [B, Lv]
 
         # 5. Soft mask using softmax
-        m_v = F.softmax(s_v, dim=-1)  # [B, Lv]
+        # m_v = F.softmax(s_v, dim=-1)  # [B, Lv]
+        p_v = F.softmax(s_v, dim=-1)
+        m_v = torch.clamp(self.rho * Lv * p_v, 0.0, 1.0)  # mean ≈ rho, values in [0,1]
 
         # 6. Split into consistent and inconsistent parts
         V_con = m_v.unsqueeze(-1) * V  # [B, Lv, 768]
@@ -189,9 +217,12 @@ class CIDModule(nn.Module):
 
         # Compute negative alignment
         A_neg = torch.matmul(T, V_neg.transpose(1, 2)) / tau  # [B, Lt, Lv]
+        A_neg = A_neg.masked_fill(pad_mask.unsqueeze(-1), -1e4)
         s_v_neg = A_neg.max(dim=1).values  # [B, Lv]
-        m_v_neg = F.softmax(s_v_neg, dim=-1)  # [B, Lv]
-
+        # m_v_neg = F.softmax(s_v_neg, dim=-1)  # [B, Lv]
+        p_v_neg = F.softmax(s_v_neg, dim=-1)
+        m_v_neg = torch.clamp(self.rho * Lv * p_v_neg, 0.0, 1.0)
+        loss_itm = F.relu(m_v_neg.mean() - m_v.mean() + self.delta)
         # Loss: encourage m_v_neg < m_v by at least delta
         loss_itm = F.relu(m_v_neg.mean() - m_v.mean() + self.delta)
 
@@ -353,6 +384,9 @@ class RCLMuFN(nn.Module):
         self.classifier_fuse = nn.Linear(args.image_size , args.label_number)
         self.cross_att = CrossAttention(feature_dim=768, dropout_prob=0.1)
         self.loss_fct = nn.CrossEntropyLoss()
+        # Learnable fusion weights (softmax-normalized) for image/text mixes.
+        self.res_weight = nn.Parameter(torch.log(torch.tensor([0.6, 0.4], dtype=torch.float)))
+        self.fuse_weight = nn.Parameter(torch.log(torch.tensor([0.7, 0.3], dtype=torch.float)))
         # BERT/ResNet branches (disabled).
         # self.tokenizer = BertTokenizer.from_pretrained("/home/user/chengtaiyu/models/bert-base-uncased")
         # self.bert_model = BertModel.from_pretrained("/home/user/chengtaiyu/models/bert-base-uncased")
@@ -414,17 +448,20 @@ class RCLMuFN(nn.Module):
         # Alignment and connection layers
         self.cid_proj = nn.Linear(768, 768, bias=True)
         self.cid_ln = nn.LayerNorm(768)
+        self.ln_cid = nn.LayerNorm(768)
+        self.ln_fuse = nn.LayerNorm(768)
         self.res_ln = nn.LayerNorm(768)
+        self.gate_fc = nn.Linear(768 * 2, 768)
 
         # Alpha parameter for gradual integration (initialized to 0 for reversibility)
         self.alpha = nn.Parameter(torch.tensor(0.0))
 
-        # Loss weights
-        self.lambda_ratio = 1.0
-        self.lambda_itm = 0.5
+        # Loss weights (start conservative, can increase during training)
+        self.lambda_ratio = 0  # Reduced from 1.0 to avoid over-constraining
+        self.lambda_itm = 0   # Restored from 0.0 to prevent mask collapse
 
     def forward(self, inputs, batch, labels):
-        output = self.model(**inputs,output_attentions=True)
+        output = self.model(**inputs,output_attentions=False)
 
         # 提取对应的特征
         text_features = output['text_model_output']['last_hidden_state']  # 128，77，512
@@ -434,36 +471,35 @@ class RCLMuFN(nn.Module):
         text_feature = self.text_linear(text_feature)  # 64，768
         image_feature = self.image_linear(image_feature)  # 64,768
 
-        text_list, image_list, label_list, id_list, samples = batch
+        text_list, image_list, label_list, id_list = batch
 
         # ========================================================================
         # CID-DIMM Pipeline: Insert after extracting last_hidden_state
         # ========================================================================
+        attn_mask = inputs.get("attention_mask", None)
+        if attn_mask is None:
+            input_ids = inputs.get("input_ids", None)
+            if input_ids is not None:
+                attn_mask = (input_ids != 0).long()
+            else:
+                attn_mask = torch.ones(
+                    text_features.size(0),
+                    text_features.size(1),
+                    dtype=torch.long,
+                    device=text_features.device
+                )
+        else:
+            attn_mask = attn_mask.to(text_features.device)
+        attn_mask = align_attention_mask(attn_mask, text_features.size(1))
+
         # Run CID module
         T, V_con, V_inc, m_v, loss_ratio, loss_itm = self.cid(
             text_features,
             image_features,
-            inputs["attention_mask"]
+            attn_mask
         )
 
-        # Create padding mask (True = pad) with correct sequence length matching T
-        # Handle variable sequence lengths robustly
-        actual_seq_len = T.size(1)  # Actual sequence length from CID output
-        attn_mask = inputs["attention_mask"]
-
-        if attn_mask.size(1) >= actual_seq_len:
-            # Truncate attention mask to match T's length
-            pad_mask = (attn_mask[:, :actual_seq_len] == 0)  # [B, actual_seq_len]
-        else:
-            # Extend attention mask if T is longer (rare case)
-            batch_size = attn_mask.size(0)
-            # Use existing mask + assume rest is padding
-            pad_mask_base = (attn_mask == 0)
-            extra_len = actual_seq_len - attn_mask.size(1)
-            extra_padding = torch.ones(batch_size, extra_len,
-                                      dtype=torch.bool,
-                                      device=attn_mask.device)
-            pad_mask = torch.cat([pad_mask_base, extra_padding], dim=1)
+        pad_mask = (attn_mask == 0)
 
         # Run DIMM module
         z_cid = self.dimm(T, V_con, V_inc, pad_mask)  # [B, 768]
@@ -513,30 +549,40 @@ class RCLMuFN(nn.Module):
 
         txt_out = self.cross_att(txt_output, image_output, image_output)  # 32,768
         image_out = self.cross_att(image_output, txt_output, txt_output)  # 32,768
-        res_bert = 0.6 * image_out + 0.4 * txt_out  # 32,768
+        # res_bert = 0.6 * image_out + 0.4 * txt_out  # 32,768
+        res_alpha = torch.softmax(self.res_weight, dim=0)
+        res_bert = res_alpha[0] * image_out + res_alpha[1] * txt_out  # 32,768
         # res_bert = image_t + text_im
 
         # ========================================================================
         # CID-DIMM Connection: Align and integrate with residual connection
         # ========================================================================
-        # Apply alignment with learnable alpha (initialized to 0 for reversibility)
-        res_new = self.res_ln(res_bert + self.alpha * cid_hat)  # [B, 768]
+        # Scheme A: use CID as the main branch
+        # res_new = cid_hat  # [B, 768]
+
         # ========================================================================
 
-        # CLIP-View Feature Fusion
-        cross_feature_text = self.cross_att(text_feature, image_feature, image_feature)  # 32,768
-        cross_feature_image = self.cross_att(image_feature, text_feature, text_feature)  # 32,768
-        fuse_feature = 0.7 * cross_feature_text + 0.3 * cross_feature_image
+        # # CLIP-View Feature Fusion
+        # cross_feature_text = self.cross_att(text_feature, image_feature, image_feature)  # 32,768
+        # cross_feature_image = self.cross_att(image_feature, text_feature, text_feature)  # 32,768
+        # # fuse_feature = 0.7 * cross_feature_text + 0.3 * cross_feature_image
+        # fuse_alpha = torch.softmax(self.fuse_weight, dim=0)
+        # fuse_feature = fuse_alpha[0] * cross_feature_text + fuse_alpha[1] * cross_feature_image
+        # fuse = self.ln_fuse(fuse_feature)
+        # cid = self.ln_cid(cid_hat)
 
-        # MuFFM: Now using res_new (integrated with CID-DIMM)
-        att = self.attetion_block(torch.cat([fuse_feature, res_new], dim=-1))  # 32,768
-        output = 0.5 * fuse_feature + 0.5 * (att * self.mlp_layer(torch.cat([fuse_feature, res_new], dim=-1)))  # 32,768
+        # # Gated residual fusion
+        # g = torch.sigmoid(self.gate_fc(torch.cat([fuse, cid], dim=-1)))  # [B, 768]
+        # output = fuse + g * cid  # [B, 768]
 
-        # Predict
-        logits_fuse = self.classifier_fuse(output)  # 64,2  output
-        fuse_score = nn.functional.softmax(logits_fuse, dim=-1)  # 64,2
+        # # Predict
+        # logits_fuse = self.classifier_fuse(output)  # 64,2  output
+        # fuse_score = nn.functional.softmax(logits_fuse, dim=-1)  # 64,2
 
-        score = fuse_score
+        # score = fuse_score
+        output = self.ln_cid(cid_hat)
+        logits_fuse = self.classifier_fuse(output)
+        score = nn.functional.softmax(logits_fuse, dim=-1)
 
         outputs = (score,) # (64,2)
         if labels is not None:

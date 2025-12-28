@@ -14,7 +14,8 @@ from sklearn import metrics
 
 def predict(args, model, device, data, processor, pre = None):
 
-    data_loader = DataLoader(data, batch_size=args.test_batch_size, collate_fn=MyDataset.collate_func,shuffle=False)
+    data_loader = DataLoader(data, batch_size=args.test_batch_size, collate_fn=MyDataset.collate_func, shuffle=False,
+                             num_workers=4, pin_memory=True)
     n_correct, n_total = 0, 0
     t_targets_all, t_outputs_all = None, None
 
@@ -26,11 +27,11 @@ def predict(args, model, device, data, processor, pre = None):
     with open(pre,'w',encoding='utf-8') as fout:
         with torch.no_grad():
             for i_batch, t_batch in enumerate(data_loader):
-                text_list, image_list, label_list, id_list, samples = t_batch
+                text_list, image_list, label_list, id_list = t_batch
                 image.extend(id_list)
                 text.extend(text_list)
-                inputs = processor(text=text_list, images=image_list, padding='max_length', truncation=True, max_length=args.max_len, return_tensors="pt").to(device)
-                labels = torch.tensor(label_list).to(device)
+                inputs = processor(text=text_list, images=image_list, padding='max_length', truncation=True, max_length=args.max_len, return_tensors="pt").to(device, non_blocking=True)
+                labels = torch.tensor(label_list).to(device, non_blocking=True)
 
                 t_targets = labels
                 loss, t_outputs = model(inputs,t_batch, labels=labels)
@@ -106,7 +107,7 @@ def main():
     test_data = MyDataset(mode='test', text_name=args.text_name, limit=None)
 
     model.load_state_dict(torch.load(os.path.join(args.model_path, "model.pt"), map_location="cpu"))
-    model.to(device)
+    model.to(device, non_blocking=True)
     model.eval()
 
     predict(args, model, device, test_data, processor, pre=args.save_file)

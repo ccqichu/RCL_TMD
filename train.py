@@ -21,9 +21,11 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
     train_loader = DataLoader(dataset=train_data,
                               batch_size=args.train_batch_size,
                               collate_fn=MyDataset.collate_func,
-                              shuffle=True)
+                              shuffle=True,
+                              num_workers=4,
+                              pin_memory=True)
     total_steps = int(len(train_loader) * args.num_train_epochs)
-    model.to(device)
+    model.to(device, non_blocking=True)
 
     if args.optimizer_name == 'adafactor':
         from transformers.optimization import Adafactor, AdafactorSchedule
@@ -78,11 +80,11 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
         model.train()
 
         for step, batch in enumerate(iter_bar):
-            text_list, image_list, label_list, id_list, samples = batch
+            text_list, image_list, label_list, id_list = batch
             if args.model == 'RCLMuFN':
                 inputs = processor(text=text_list, images=image_list, padding='max_length',
-                                   truncation=True, max_length=args.max_len, return_tensors="pt").to(device)
-                labels = torch.tensor(label_list).to(device)
+                                   truncation=True, max_length=args.max_len, return_tensors="pt").to(device, non_blocking=True)
+                labels = torch.tensor(label_list).to(device, non_blocking=True)
 
             '''add==============='''
             loss, score = model(inputs, batch, labels=labels,)
@@ -122,7 +124,8 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
 
 
 def evaluate_acc_f1(args, model, device, data, processor, macro=False,pre = None, mode='test'):
-        data_loader = DataLoader(data, batch_size=args.dev_batch_size, collate_fn=MyDataset.collate_func,shuffle=False)
+        data_loader = DataLoader(data, batch_size=args.dev_batch_size, collate_fn=MyDataset.collate_func, shuffle=False,
+                                 num_workers=4, pin_memory=True)
         n_correct, n_total = 0, 0
         t_targets_all, t_outputs_all = None, None
 
@@ -131,11 +134,11 @@ def evaluate_acc_f1(args, model, device, data, processor, macro=False,pre = None
         sum_step = 0
         with torch.no_grad():
             for i_batch, t_batch in enumerate(data_loader):
-                text_list, image_list, label_list, id_list, samples = t_batch
+                text_list, image_list, label_list, id_list = t_batch
                 if args.model == 'RCLMuFN':
                     inputs = processor(text=text_list, images=image_list, padding='max_length',
-                                       truncation=True, max_length=args.max_len, return_tensors="pt").to(device)
-                    labels = torch.tensor(label_list).to(device)
+                                       truncation=True, max_length=args.max_len, return_tensors="pt").to(device, non_blocking=True)
+                    labels = torch.tensor(label_list).to(device, non_blocking=True)
 
                 t_targets = labels
                 loss, t_outputs = model(inputs, t_batch, labels=labels)

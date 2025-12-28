@@ -80,14 +80,6 @@ class MyDataset(Dataset):
         image_list = []
         label_list = []
         id_list = []
-        batches = []
-
-
-        transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
 
         for instance in batch_data:
             a = instance[0]
@@ -98,9 +90,4 @@ class MyDataset(Dataset):
             image_list.append(instance[1])
             label_list.append(instance[2])
             id_list.append(instance[3])
-            samples = transform(instance[1])
-            batches.append(samples)
-        batch = tuple(batches)
-        samples = nested_tensor_from_tensor_list(batch)
-        return text_list, image_list, label_list, id_list, samples
-
+        return text_list, image_list, label_list, id_list
