@@ -20,35 +20,58 @@ import copy
 # ============================================================================
 
 def masked_mean(x: torch.Tensor, pad_mask: Optional[torch.Tensor] = None):
-    """
-    Compute masked mean over sequence dimension.
-    Args:
-        x: [B, L, D] tensor
-        pad_mask: [B, L] boolean tensor where True indicates padding positions
-    Returns:
-        [B, D] tensor
-    """
     if pad_mask is None:
         return x.mean(dim=1)
-    keep = (~pad_mask).float().unsqueeze(-1)  # [B, L, 1]
+
+    # 对齐 pad_mask 长度到 x 的序列长度
+    if pad_mask.size(1) != x.size(1):
+        if pad_mask.size(1) > x.size(1):
+            pad_mask = pad_mask[:, :x.size(1)]
+        else:
+            extra = torch.ones(
+                pad_mask.size(0),
+                x.size(1) - pad_mask.size(1),
+                dtype=pad_mask.dtype,
+                device=pad_mask.device
+            )
+            pad_mask = torch.cat([pad_mask, extra], dim=1)
+
+    pad_mask = pad_mask.bool()
+    keep = (~pad_mask).float().unsqueeze(-1)
     denom = keep.sum(dim=1).clamp_min(1.0)
     return (x * keep).sum(dim=1) / denom
 
 
-def make_neg_index(batch_size: int, device):
+def make_neg_index(batch_size: int, device, labels: Optional[torch.Tensor] = None):
     """
     Generate negative sample indices for contrastive learning.
     Ensures idx[i] != i for all i.
     Args:
         batch_size: batch size
+        labels: optional labels tensor [B] to avoid same-label negatives
         device: torch device
     Returns:
         [B] tensor of shuffled indices
     """
-    idx = torch.randperm(batch_size, device=device)
-    # Avoid idx[i]==i, use circular shift if collision exists
-    if torch.any(idx == torch.arange(batch_size, device=device)):
-        idx = torch.roll(idx, shifts=1, dims=0)
+    if labels is None:
+        idx = torch.randperm(batch_size, device=device)
+        # Avoid idx[i]==i, use circular shift if collision exists
+        if torch.any(idx == torch.arange(batch_size, device=device)):
+            idx = torch.roll(idx, shifts=1, dims=0)
+        return idx
+
+    labels = labels.view(-1)
+    idx = torch.empty(batch_size, dtype=torch.long, device=device)
+    all_indices = torch.arange(batch_size, device=device)
+    for i in range(batch_size):
+        candidates = all_indices[labels != labels[i]]
+        if candidates.numel() == 0:
+            candidates = all_indices[all_indices != i]
+        if candidates.numel() == 0:
+            idx[i] = i
+        else:
+            j = torch.randint(0, candidates.numel(), (1,), device=device)
+            idx[i] = candidates[j]
     return idx
 
 
@@ -100,7 +123,7 @@ class CrossAttention(nn.Module):
         self.value_proj = nn.Linear(feature_dim, feature_dim)
         self.dropout = nn.Dropout(dropout_prob)
 
-    def forward(self, query, key, value):
+    def forward(self, query, key, value, key_padding_mask=None):
         # # Avoid cross-sample attention when inputs are [B, D]
         # squeezed = False
         # if query.dim() == 2:
@@ -118,6 +141,11 @@ class CrossAttention(nn.Module):
         value = self.value_proj(value)
         attention_scores = torch.matmul(query, key.transpose(-1, -2))
         attention_scores = attention_scores / (key.size(-1) ** 0.5)
+        if key_padding_mask is not None:
+            attention_scores = attention_scores.masked_fill(
+                key_padding_mask.unsqueeze(1),
+                -1e4
+            )
         attention_weights = F.softmax(attention_scores, dim=-1)
         attended_values = torch.matmul(attention_weights, value)
         attended_values = self.dropout(attended_values)
@@ -132,7 +160,7 @@ class CrossAttention(nn.Module):
 
 class CIDModule(nn.Module):
     """
-    CID Module with soft mask, temperature annealing, and consistency losses.
+    CID Module with bilateral (text + vision) soft mask decomposition.
 
     Inputs:
         - T_tok: [B, Lt, 512] CLIP text last_hidden_state
@@ -140,32 +168,38 @@ class CIDModule(nn.Module):
         - attn_mask: [B, Lt] attention mask (1=valid, 0=pad)
 
     Outputs:
-        - T: [B, Lt, 768] projected text features
+        - T_con: [B, Lt, 768] consistent text tokens
+        - T_inc: [B, Lt, 768] inconsistent text tokens
         - V_con: [B, Lv, 768] consistent vision patches
         - V_inc: [B, Lv, 768] inconsistent vision patches
-        - m_v: [B, Lv] consistency mask
-        - loss_ratio: scalar, ratio loss
-        - loss_itm: scalar, image-text matching mask loss
+        - m_t: [B, Lt] text consistency mask
+        - m_v: [B, Lv] vision consistency mask
+        - loss_ratio: scalar, ratio loss (bilateral)
+        - loss_itm: scalar, image-text matching mask loss (bilateral)
     """
 
     def __init__(self, text_dim=512, vision_dim=768, hidden_dim=768,
-                 rho=0.3, delta=0.1, tau0=1.0, tau_min=0.4, decay=0.9995):
+                 rho=0.3, rho_t=0.5, delta=0.1, tau0=1.0, tau_min=0.4, decay=0.9995,
+                 neg_sampling="label_aware"):
         super(CIDModule, self).__init__()
 
         # Project text from 512 to 768
         self.text_proj = nn.Linear(text_dim, hidden_dim)
+        self.hidden_dim = hidden_dim
 
         # Hyperparameters
-        self.rho = rho  # target ratio for consistent patches
+        self.rho = rho  # target ratio for consistent patches/tokens
+        self.rho_t = rho_t 
         self.delta = delta  # margin for ITM loss
         self.tau0 = tau0  # initial temperature
         self.tau_min = tau_min  # minimum temperature
         self.decay = decay  # temperature decay rate
+        self.neg_sampling = neg_sampling
 
         # Temperature annealing: maintain global step as buffer
         self.register_buffer('global_step', torch.tensor(0, dtype=torch.long))
 
-    def forward(self, T_tok, V_tok, attn_mask):
+    def forward(self, T_tok, V_tok, attn_mask, labels: Optional[torch.Tensor] = None):
         """
         Args:
             T_tok: [B, Lt, 512] text features from CLIP
@@ -173,60 +207,145 @@ class CIDModule(nn.Module):
             attn_mask: [B, Lt] attention mask (1=valid, 0=pad)
 
         Returns:
-            T, V_con, V_inc, m_v, loss_ratio, loss_itm
+            T_con, T_inc, V_con, V_inc, m_t, m_v, loss_ratio, loss_itm
         """
         B, Lt, _ = T_tok.shape
         Lv = V_tok.size(1)
         device = T_tok.device
 
-        # 1. Project text to 768 dimensions
-        T = self.text_proj(T_tok)  # [B, Lt, 768]
+        # 1. Project text to 768 dimensions (if needed)
+        if T_tok.size(-1) == self.hidden_dim:
+            T = T_tok
+        else:
+            T = self.text_proj(T_tok)  # [B, Lt, 768]
         V = V_tok  # [B, Lv, 768]
 
         # 2. Create padding mask (True = padding)
         pad_mask = (attn_mask == 0)  # [B, Lt]
-
+        valid = (~pad_mask).float() 
+        valid_den = valid.sum().clamp_min(1.0)  # scalar
         # 3. Temperature annealing
         if self.training:
             self.global_step += 1
         tau = max(self.tau_min, self.tau0 * (self.decay ** self.global_step.item()))
 
-        # 4. Compute alignment scores
-        # A = T @ V^T / tau -> [B, Lt, Lv]
-        A = torch.matmul(T, V.transpose(1, 2)) / tau  # [B, Lt, Lv]
-        A = A.masked_fill(pad_mask.unsqueeze(-1), -1e4)
+        # ====================================================================
+        # Bilateral Decomposition: Text and Vision
+        # ====================================================================
+
+        # 4a. Compute alignment scores: T -> V
+        # A_tv = T @ V^T / tau -> [B, Lt, Lv]
+        A_tv = torch.matmul(T, V.transpose(1, 2)) / tau  # [B, Lt, Lv]
+        A_tv = A_tv.masked_fill(pad_mask.unsqueeze(-1), -1e4)
+
         # s_v = max over text tokens -> [B, Lv]
-        s_v = A.max(dim=1).values  # [B, Lv]
+        s_v = A_tv.max(dim=1).values  # [B, Lv]
 
-        # 5. Soft mask using softmax
-        # m_v = F.softmax(s_v, dim=-1)  # [B, Lv]
+        # # 4b. Compute alignment scores: V -> T
+        # # A_vt = V @ T^T / tau -> [B, Lv, Lt]
+        # A_vt = torch.matmul(V, T.transpose(1, 2)) / tau  # [B, Lv, Lt]
+        # A_vt = A_vt.masked_fill(pad_mask.unsqueeze(1), -1e4)
+
+        # # s_t = max over vision patches -> [B, Lt]
+        # s_t = A_vt.max(dim=1).values  # [B, Lt]
+
+        # # Mask out padding positions in s_t
+        # s_t = s_t.masked_fill(pad_mask, -1e4)
+
+        # token-side score: max over patches -> [B, Lt]
+        # (No need to compute A_vt separately; it's A_tv.transpose(1,2))
+        s_t = A_tv.max(dim=2).values  # [B, Lt]
+        s_t = s_t.masked_fill(pad_mask, -1e4)
+        # 5. Soft mask using softmax with scaling
+        # Vision side mask
         p_v = F.softmax(s_v, dim=-1)
-        m_v = torch.clamp(self.rho * Lv * p_v, 0.0, 1.0)  # mean ≈ rho, values in [0,1]
+        m_v = torch.clamp(self.rho * Lv * p_v, 0.0, 1.0)  # [B, Lv]
 
+        # Text side mask (only for non-padding positions)
+        # Count valid tokens per sample
+        valid_counts = valid.sum(dim=1, keepdim=True).clamp_min(1.0)  # [B, 1]        p_t = F.softmax(s_t, dim=-1)  # [B, Lt]
+        # m_t = torch.clamp(self.rho * valid_counts * p_t, 0.0, 1.0)  # [B, Lt]
+        # m_t = m_t.masked_fill(pad_mask, 0.0)  # Zero out padding
+        p_t = F.softmax(s_t, dim=-1)  # [B, Lt]
+
+        m_t = torch.clamp(self.rho_t * valid_counts * p_t, 0.0, 1.0)  # [B, Lt]
+        m_t = m_t * valid  # pad -> 0.0
         # 6. Split into consistent and inconsistent parts
+        # Vision side
         V_con = m_v.unsqueeze(-1) * V  # [B, Lv, 768]
         V_inc = (1 - m_v.unsqueeze(-1)) * V  # [B, Lv, 768]
 
-        # 7. L_ratio: encourage mask mean to be close to rho
-        loss_ratio = (m_v.mean() - self.rho) ** 2
-
-        # 8. L_itm: image-text matching mask loss
+        # Text side
+        # T_con = m_t.unsqueeze(-1) * T  # [B, Lt, 768]
+        # T_inc = (1 - m_t.unsqueeze(-1)) * T  # [B, Lt, 768]
+        T_con = m_t.unsqueeze(-1) * T  # [B, Lt, 768]
+        m_t_inc = (1.0 - m_t) * valid  # pad -> 0.0
+        T_inc = m_t_inc.unsqueeze(-1) * T  # [B, Lt, 768]
+        # 7. L_ratio: encourage mask mean to be close to rho (bilateral)
+        loss_ratio_v = (m_v.mean() - self.rho) ** 2
+        # # For text, only consider non-padding positions
+        # m_t_valid = masked_mean(m_t.unsqueeze(-1), pad_mask).squeeze(-1)  # [B]
+        # loss_ratio_t = ((m_t_valid.mean() - self.rho) ** 2)  # scalar
+        # loss_ratio = loss_ratio_v + loss_ratio_t
+        # For text, compute global mean over valid tokens -> scalar
+        m_t_mean = (m_t * valid).sum() / valid_den
+        loss_ratio_t = (m_t_mean - self.rho_t) ** 2
+        loss_ratio = loss_ratio_v + loss_ratio_t
+        # 8. L_itm: image-text matching mask loss (bilateral)
         # Create negative samples by shuffling batch
-        idx_neg = make_neg_index(B, device)
+        if B <= 1:
+            idx_neg = torch.zeros(B, dtype=torch.long, device=device)
+        elif self.neg_sampling == "shuffle" or labels is None:
+            idx_neg = make_neg_index(B, device, labels=None)
+        elif self.neg_sampling == "low_sim":
+            T_pool = masked_mean(T, pad_mask)  # [B, 768]
+            V_pool = V.mean(dim=1)  # [B, 768]
+            T_norm = F.normalize(T_pool, dim=-1)
+            V_norm = F.normalize(V_pool, dim=-1)
+            sim = torch.matmul(T_norm, V_norm.transpose(0, 1))  # [B, B]
+            score = sim + sim.transpose(0, 1)
+            mask = torch.eye(B, device=device, dtype=torch.bool)
+            if labels is not None:
+                labels = labels.view(-1)
+                same = labels.view(B, 1) == labels.view(1, B)
+                diff_exists = (~same).any(dim=1)
+                mask = mask | (same & diff_exists.unsqueeze(1))
+            score = score.masked_fill(mask, float("inf"))
+            idx_neg = score.argmin(dim=1)
+        else:
+            idx_neg = make_neg_index(B, device, labels=labels)
         V_neg = V[idx_neg]  # [B, Lv, 768]
+        T_neg = T[idx_neg]  # [B, Lt, 768]
 
-        # Compute negative alignment
-        A_neg = torch.matmul(T, V_neg.transpose(1, 2)) / tau  # [B, Lt, Lv]
-        A_neg = A_neg.masked_fill(pad_mask.unsqueeze(-1), -1e4)
-        s_v_neg = A_neg.max(dim=1).values  # [B, Lv]
-        # m_v_neg = F.softmax(s_v_neg, dim=-1)  # [B, Lv]
+        # 8a. Vision side ITM loss
+        A_neg_v = torch.matmul(T, V_neg.transpose(1, 2)) / tau  # [B, Lt, Lv]
+        A_neg_v = A_neg_v.masked_fill(pad_mask.unsqueeze(-1), -1e4)
+        s_v_neg = A_neg_v.max(dim=1).values  # [B, Lv]
         p_v_neg = F.softmax(s_v_neg, dim=-1)
         m_v_neg = torch.clamp(self.rho * Lv * p_v_neg, 0.0, 1.0)
-        loss_itm = F.relu(m_v_neg.mean() - m_v.mean() + self.delta)
-        # Loss: encourage m_v_neg < m_v by at least delta
-        loss_itm = F.relu(m_v_neg.mean() - m_v.mean() + self.delta)
+        loss_itm_v = F.relu(m_v_neg.mean() - m_v.mean() + self.delta)
 
-        return T, V_con, V_inc, m_v, loss_ratio, loss_itm
+        # 8b. Text side ITM loss
+        # A_neg_t = torch.matmul(V, T_neg.transpose(1, 2)) / tau  # [B, Lv, Lt]
+        # A_neg_t = A_neg_t.masked_fill(pad_mask.unsqueeze(1), -1e4)
+        # s_t_neg = A_neg_t.max(dim=1).values  # [B, Lt]
+        # s_t_neg = s_t_neg.masked_fill(pad_mask, -1e4)
+        A_neg_t = torch.matmul(T_neg, V.transpose(1, 2)) / tau  # [B, Lt, Lv]
+        A_neg_t = A_neg_t.masked_fill(pad_mask.unsqueeze(-1), -1e4)
+        s_t_neg = A_neg_t.max(dim=2).values  # [B, Lt]
+        s_t_neg = s_t_neg.masked_fill(pad_mask, -1e4)        
+        p_t_neg = F.softmax(s_t_neg, dim=-1)
+        # m_t_neg = torch.clamp(self.rho * valid_counts * p_t_neg, 0.0, 1.0)
+        # m_t_neg = m_t_neg.masked_fill(pad_mask, 0.0)
+        # m_t_neg_valid = masked_mean(m_t_neg.unsqueeze(-1), pad_mask).squeeze(-1)  # [B]
+        # loss_itm_t = F.relu(m_t_neg_valid.mean() - m_t_valid.mean() + self.delta)  # scalar
+        m_t_neg = torch.clamp(self.rho_t * valid_counts * p_t_neg, 0.0, 1.0)
+        m_t_neg = m_t_neg * valid
+        m_t_neg_mean = (m_t_neg * valid).sum() / valid_den
+        loss_itm_t = F.relu(m_t_neg_mean - m_t_mean + self.delta)
+        loss_itm = loss_itm_v + loss_itm_t
+
+        return T_con, T_inc, V_con, V_inc, m_t, m_v, loss_ratio, loss_itm
 
 
 # ============================================================================
@@ -235,10 +354,11 @@ class CIDModule(nn.Module):
 
 class DIMMModule(nn.Module):
     """
-    DIMM Module for reasoning over consistent/inconsistent interactions.
+    DIMM Module for bilateral reasoning over consistent/inconsistent interactions.
 
     Inputs:
-        - T: [B, Lt, 768] projected text features
+        - T_con: [B, Lt, 768] consistent text tokens
+        - T_inc: [B, Lt, 768] inconsistent text tokens
         - V_con: [B, Lv, 768] consistent vision patches
         - V_inc: [B, Lv, 768] inconsistent vision patches
         - pad_mask: [B, Lt] padding mask (True=pad)
@@ -250,52 +370,84 @@ class DIMMModule(nn.Module):
     def __init__(self, hidden_dim=768, num_heads=8, dropout=0.1, num_encoder_layers=1):
         super(DIMMModule, self).__init__()
 
-        # Multi-head attention for consistent interaction
-        self.mha_con = nn.MultiheadAttention(
+        # Multi-head attention for consistent-consistent interaction
+        self.mha_con_con = nn.MultiheadAttention(
             embed_dim=hidden_dim,
             num_heads=num_heads,
             dropout=dropout,
             batch_first=True
         )
 
-        # Multi-head attention for inter-modality reasoning (inconsistent)
-        self.mha_inter = nn.MultiheadAttention(
+        # Multi-head attention for inconsistent-inconsistent interaction
+        self.mha_inc_inc = nn.MultiheadAttention(
             embed_dim=hidden_dim,
             num_heads=num_heads,
             dropout=dropout,
             batch_first=True
         )
 
-        # Transformer encoder for intra-modality reasoning
-        encoder_layer = nn.TransformerEncoderLayer(
+        # Multi-head attention for cross interaction (consistent text -> inconsistent vision)
+        self.mha_cross1 = nn.MultiheadAttention(
+            embed_dim=hidden_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True
+        )
+
+        # Multi-head attention for cross interaction (inconsistent text -> consistent vision)
+        self.mha_cross2 = nn.MultiheadAttention(
+            embed_dim=hidden_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True
+        )
+
+        # Transformer encoder for text intra-modality reasoning
+        encoder_layer_t = nn.TransformerEncoderLayer(
             d_model=hidden_dim,
             nhead=num_heads,
             dim_feedforward=hidden_dim * 4,
             dropout=dropout,
             batch_first=True
         )
-        self.transformer_encoder = nn.TransformerEncoder(
-            encoder_layer,
+        self.transformer_encoder_t = nn.TransformerEncoder(
+            encoder_layer_t,
             num_layers=num_encoder_layers
         )
 
-        # Layer norms
-        self.ln1 = nn.LayerNorm(hidden_dim)
-        self.ln2 = nn.LayerNorm(hidden_dim)
+        # Transformer encoder for vision intra-modality reasoning
+        encoder_layer_v = nn.TransformerEncoderLayer(
+            d_model=hidden_dim,
+            nhead=num_heads,
+            dim_feedforward=hidden_dim * 4,
+            dropout=dropout,
+            batch_first=True
+        )
+        self.transformer_encoder_v = nn.TransformerEncoder(
+            encoder_layer_v,
+            num_layers=num_encoder_layers
+        )
 
-        # Final projection MLP
+        # Layer norms for each pathway
+        self.ln_con_con = nn.LayerNorm(hidden_dim)
+        self.ln_inc_inc = nn.LayerNorm(hidden_dim)
+        self.ln_cross1 = nn.LayerNorm(hidden_dim)
+        self.ln_cross2 = nn.LayerNorm(hidden_dim)
+
+        # Final projection MLP (6 pathways: con-con, inc-inc, cross1, cross2, intra-t, intra-v)
         self.mlp = nn.Sequential(
-            nn.Linear(hidden_dim * 3, hidden_dim * 2),
+            nn.Linear(hidden_dim * 6, hidden_dim * 3),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.Linear(hidden_dim * 3, hidden_dim),
             nn.LayerNorm(hidden_dim)
         )
 
-    def forward(self, T, V_con, V_inc, pad_mask):
+    def forward(self, T_con, T_inc, V_con, V_inc, pad_mask):
         """
         Args:
-            T: [B, Lt, 768] text features
+            T_con: [B, Lt, 768] consistent text tokens
+            T_inc: [B, Lt, 768] inconsistent text tokens
             V_con: [B, Lv, 768] consistent vision patches
             V_inc: [B, Lv, 768] inconsistent vision patches
             pad_mask: [B, Lt] padding mask (True=pad)
@@ -303,57 +455,99 @@ class DIMMModule(nn.Module):
         Returns:
             z_cid: [B, 768] unified representation
         """
-        # Ensure pad_mask matches T's sequence length
-        # This handles cases where sequence lengths vary across batches
-        if pad_mask.size(1) != T.size(1):
-            # Adjust pad_mask to match T's actual sequence length
-            if pad_mask.size(1) > T.size(1):
-                # Truncate pad_mask
-                pad_mask = pad_mask[:, :T.size(1)]
+        # Ensure pad_mask matches sequence length
+        if pad_mask.size(1) != T_con.size(1):
+            if pad_mask.size(1) > T_con.size(1):
+                pad_mask = pad_mask[:, :T_con.size(1)]
             else:
-                # Extend pad_mask with True (padding) values
                 batch_size = pad_mask.size(0)
-                extra_len = T.size(1) - pad_mask.size(1)
+                extra_len = T_con.size(1) - pad_mask.size(1)
                 extra_padding = torch.ones(batch_size, extra_len,
                                           dtype=pad_mask.dtype,
                                           device=pad_mask.device).bool()
                 pad_mask = torch.cat([pad_mask, extra_padding], dim=1)
 
-        # 1. Consistent interaction: text attends to consistent patches
-        T_add, _ = self.mha_con(
-            query=T,
+        # ====================================================================
+        # 1. Consistent-Consistent Interaction: T_con <-> V_con
+        # ====================================================================
+        T_con_enh, _ = self.mha_con_con(
+            query=T_con,
             key=V_con,
             value=V_con,
             key_padding_mask=None  # Vision has no padding
         )
-        T_enh = self.ln1(T + T_add)  # [B, Lt, 768]
+        T_con_enh = self.ln_con_con(T_con + T_con_enh)
+        z_con_con = masked_mean(T_con_enh, pad_mask)  # [B, 768]
 
-        # Aggregate to vector using masked mean
-        z_con = masked_mean(T_enh, pad_mask)  # [B, 768]
-
-        # 2. Inter-modality reasoning: enhanced text attends to inconsistent patches
-        T2, _ = self.mha_inter(
-            query=T_enh,
+        # ====================================================================
+        # 2. Inconsistent-Inconsistent Interaction: T_inc <-> V_inc
+        # ====================================================================
+        T_inc_enh, _ = self.mha_inc_inc(
+            query=T_inc,
             key=V_inc,
             value=V_inc,
             key_padding_mask=None
         )
-        z_inter = masked_mean(T2, pad_mask)  # [B, 768]
+        T_inc_enh = self.ln_inc_inc(T_inc + T_inc_enh)
+        z_inc_inc = masked_mean(T_inc_enh, pad_mask)  # [B, 768]
 
-        # 3. Intra-modality reasoning: self-attention on enhanced text
-        T_ctx = self.transformer_encoder(
-            T_enh,
+        # ====================================================================
+        # 3. Cross Interaction 1: T_con <-> V_inc
+        # ====================================================================
+        T_cross1, _ = self.mha_cross1(
+            query=T_con,
+            key=V_inc,
+            value=V_inc,
+            key_padding_mask=None
+        )
+        T_cross1 = self.ln_cross1(T_cross1)
+        z_cross1 = masked_mean(T_cross1, pad_mask)  # [B, 768]
+
+        # ====================================================================
+        # 4. Cross Interaction 2: T_inc <-> V_con
+        # ====================================================================
+        T_cross2, _ = self.mha_cross2(
+            query=T_inc,
+            key=V_con,
+            value=V_con,
+            key_padding_mask=None
+        )
+        T_cross2 = self.ln_cross2(T_cross2)
+        z_cross2 = masked_mean(T_cross2, pad_mask)  # [B, 768]
+
+        # ====================================================================
+        # 5. Intra-modality Reasoning: Text
+        # ====================================================================
+        # Combine T_con and T_inc for intra-text reasoning
+        T_combined = T_con + T_inc  # [B, Lt, 768]
+        T_intra = self.transformer_encoder_t(
+            T_combined,
             src_key_padding_mask=pad_mask
-        )  # [B, Lt, 768]
+        )
+        z_intra_t = masked_mean(T_intra, pad_mask)  # [B, 768]
 
-        # Ensure pad_mask still matches T_ctx (in case transformer changes it)
-        if T_ctx.size(1) != pad_mask.size(1):
-            pad_mask = pad_mask[:, :T_ctx.size(1)]
+        # ====================================================================
+        # 6. Intra-modality Reasoning: Vision
+        # ====================================================================
+        # Combine V_con and V_inc for intra-vision reasoning
+        V_combined = V_con + V_inc  # [B, Lv, 768]
+        V_intra = self.transformer_encoder_v(
+            V_combined,
+            src_key_padding_mask=None  # Vision has no padding
+        )
+        z_intra_v = V_intra.mean(dim=1)  # [B, 768]
 
-        z_intra = masked_mean(T_ctx, pad_mask)  # [B, 768]
-
-        # 4. Combine all three pathways
-        z_cid = self.mlp(torch.cat([z_con, z_inter, z_intra], dim=-1))  # [B, 768]
+        # ====================================================================
+        # 7. Combine all pathways
+        # ====================================================================
+        z_cid = self.mlp(torch.cat([
+            z_con_con,   # Consistent-consistent
+            z_inc_inc,   # Inconsistent-inconsistent
+            z_cross1,    # T_con -> V_inc
+            z_cross2,    # T_inc -> V_con
+            z_intra_t,   # Text self-attention
+            z_intra_v    # Vision self-attention
+        ], dim=-1))  # [B, 768]
 
         return z_cid
 
@@ -387,17 +581,11 @@ class RCLMuFN(nn.Module):
         # Learnable fusion weights (softmax-normalized) for image/text mixes.
         self.res_weight = nn.Parameter(torch.log(torch.tensor([0.6, 0.4], dtype=torch.float)))
         self.fuse_weight = nn.Parameter(torch.log(torch.tensor([0.7, 0.3], dtype=torch.float)))
-        # BERT/ResNet branches (disabled).
-        # self.tokenizer = BertTokenizer.from_pretrained("/home/user/chengtaiyu/models/bert-base-uncased")
-        # self.bert_model = BertModel.from_pretrained("/home/user/chengtaiyu/models/bert-base-uncased")
-        # self.backbone = build_backbone(args)
+
         self.d_model = 768
         self.nheads = 8
         self.dim_feedforward = 2048
-        # self.txt = nn.Sequential(nn.Linear(self.d_model, self.d_model),
-        #                          nn.ReLU(),
-        #                          nn.LayerNorm(self.d_model)
-        #                          )
+
         self.txt2 = nn.Sequential(nn.Linear(self.d_model*2, self.d_model),
                                  nn.ReLU(),
                                  nn.Linear(self.d_model, self.d_model),
@@ -408,11 +596,7 @@ class RCLMuFN(nn.Module):
                                   nn.Linear(self.d_model, self.d_model),
                                  nn.LayerNorm(self.d_model)
                                  )
-        # self.text_self = TransformerEncoderLayer(self.d_model, self.nheads, dim_feedforward=self.dim_feedforward)
-        # self.text_cross = TransformerCrossLayer(self.d_model, self.nheads, dim_feedforward=self.dim_feedforward)
-        # self.vis_self = TransformerEncoderLayer(self.d_model, self.nheads, dim_feedforward=self.dim_feedforward)
-        # self.vis_cross = TransformerCrossLayer(self.d_model, self.nheads, dim_feedforward=self.dim_feedforward)
-        # self.imtxt_cross = TransformerCrossLayer(768, self.nheads, dim_feedforward=self.dim_feedforward)
+
         self.attetion_block = nn.Sequential(nn.Linear(self.d_model * 2, self.d_model),
                                             nn.ReLU(),
                                             nn.Linear(self.d_model, self.d_model),
@@ -421,8 +605,7 @@ class RCLMuFN(nn.Module):
                                        nn.ReLU(),
                                        nn.Linear(self.d_model, self.d_model),
                                        nn.LayerNorm(self.d_model))
-        # self.input_proj = nn.Conv2d(self.dim_feedforward, 768, kernel_size=1)
-        # self.pool = nn.AdaptiveAvgPool2d((1, 1))
+
 
         # ========================================================================
         # CID-DIMM Integration
@@ -433,10 +616,12 @@ class RCLMuFN(nn.Module):
             vision_dim=768,
             hidden_dim=768,
             rho=0.3,
+            rho_t=0.5,
             delta=0.1,
             tau0=1.0,
             tau_min=0.4,
-            decay=0.9995
+            decay=0.9995,
+            neg_sampling=args.neg_sampling
         )
         self.dimm = DIMMModule(
             hidden_dim=768,
@@ -455,6 +640,9 @@ class RCLMuFN(nn.Module):
 
         # Alpha parameter for gradual integration (initialized to 0 for reversibility)
         self.alpha = nn.Parameter(torch.tensor(0.0))
+        self.alpha_pre = 0.1
+        self.pre_ln_t = nn.LayerNorm(768)
+        self.pre_ln_v = nn.LayerNorm(768)
 
         # Loss weights (start conservative, can increase during training)
         self.lambda_ratio = 0  # Reduced from 1.0 to avoid over-constraining
@@ -473,9 +661,6 @@ class RCLMuFN(nn.Module):
 
         text_list, image_list, label_list, id_list = batch
 
-        # ========================================================================
-        # CID-DIMM Pipeline: Insert after extracting last_hidden_state
-        # ========================================================================
         attn_mask = inputs.get("attention_mask", None)
         if attn_mask is None:
             input_ids = inputs.get("input_ids", None)
@@ -491,59 +676,52 @@ class RCLMuFN(nn.Module):
         else:
             attn_mask = attn_mask.to(text_features.device)
         attn_mask = align_attention_mask(attn_mask, text_features.size(1))
-
-        # Run CID module
-        T, V_con, V_inc, m_v, loss_ratio, loss_itm = self.cid(
-            text_features,
-            image_features,
-            attn_mask
-        )
-
         pad_mask = (attn_mask == 0)
 
-        # Run DIMM module
-        z_cid = self.dimm(T, V_con, V_inc, pad_mask)  # [B, 768]
+        # ========================================================================
+        # CID-DIMM Pipeline: Token-level cross attention before CID (Scheme A)
+        # ========================================================================
+        T_proj = self.cid.text_proj(text_features)
+        pre_alpha = self.alpha_pre
+        T_ref = T_proj + pre_alpha * self.cross_att(
+            T_proj, image_features, image_features
+        )
+        V_ref = image_features + pre_alpha * self.cross_att(
+            image_features, T_proj, T_proj, key_padding_mask=pad_mask
+        )
+        T_ref = self.pre_ln_t(T_ref)
+        V_ref = self.pre_ln_v(V_ref)
+
+        # Run CID module (bilateral decomposition)
+        T_con, T_inc, V_con, V_inc, m_t, m_v, loss_ratio, loss_itm = self.cid(
+            T_ref,
+            V_ref,
+            attn_mask,
+            labels=labels
+        )
+
+        valid = (~pad_mask).float()
+        valid_den = valid.sum().clamp_min(1.0)
+        m_t_valid = m_t * valid
+        m_t_mean = m_t_valid.sum() / valid_den
+        m_t_var = ((m_t_valid - m_t_mean) ** 2 * valid).sum() / valid_den
+        self.last_cid_stats = {
+            "m_t_mean": m_t_mean.detach().item(),
+            "m_t_var": m_t_var.detach().item(),
+            "m_v_mean": m_v.mean().detach().item(),
+            "m_v_var": m_v.var(unbiased=False).detach().item(),
+        }
+
+        # Run DIMM module (bilateral interaction)
+        z_cid = self.dimm(T_con, T_inc, V_con, V_inc, pad_mask)  # [B, 768]
 
         # Project and normalize CID output
         cid_hat = self.cid_ln(self.cid_proj(z_cid))  # [B, 768]
         # ========================================================================
 
-        # ResNet/BERT feature extraction (disabled).
-        # features, pos = self.backbone(samples.to(inputs['input_ids'].device))
-        # src, mask = features[-1].decompose()  # 32,2048,7,7
-        #
-        # # resnet50
-        # src = self.input_proj(src)  # 64,768,7,7
-        # pooled_features = self.pool(src)  # [batch_size, 768, 1, 1]
-        # res_features = pooled_features.view(pooled_features.size(0), -1)  # [32, 768]
-        # # bert
-        # encoded_input = self.tokenizer(text_list, padding=True, truncation=True, return_tensors='pt')
-        # encoded_input = encoded_input.to(inputs['input_ids'].device)
-        # with torch.no_grad():
-        #     outputs_bert = self.bert_model(**encoded_input)
-        #     last_hidden_states = outputs_bert.last_hidden_state  # 64,56,768
-        #     pooler_outputs = outputs_bert.pooler_output  # 64,768
-        # bert_text_features = self.txt(pooler_outputs)  # 64,768
-
-        # SFIM (disabled): keep original code commented for reference.
-        # image_t = self.imtxt_cross(tgt=res_features, memory=bert_text_features)  # 32,768
-        # text_im = self.imtxt_cross(tgt=bert_text_features, memory=res_features)  # 32,768
-        # Use CLIP features directly.
         image_t = image_feature
         text_im = text_feature
 
-        # RCLM (simplified): use CLIP features directly.
-        # text_feature2 = self.txt2(torch.cat([text_feature, text_im], dim=-1))  # 32,768
-        # text_feature2 = text_feature2.unsqueeze(1)  # 32,1,768
-        # txt_cat = self.text_self(torch.stack([text_feature, text_im], dim=1))  # 32,2,768
-        # txt_output = self.text_cross(tgt=text_feature2, memory=txt_cat)  # 32,1,768
-        # txt_output = txt_output.squeeze(1)  # 32,768
-        #
-        # image_feature2 = self.vis2(torch.cat([image_feature, image_t],dim=-1))  # 32,768
-        # image_feature2 = image_feature2.unsqueeze(1)  # 32,1,768
-        # image_cat = self.vis_self(torch.stack([image_feature, image_t], dim=1))  # 32,2,768
-        # image_output = self.vis_cross(tgt=image_feature2, memory=image_cat)  # 32,1,768
-        # image_output = image_output.squeeze(1)  # 32,768
         txt_output = text_feature
         image_output = image_feature
 

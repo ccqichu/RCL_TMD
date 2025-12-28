@@ -1,4 +1,5 @@
 import os
+import math
 from data_set import MyDataset
 from torch.utils.data import DataLoader
 import torch
@@ -12,6 +13,18 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def _schedule_lambda(start, end, epoch_idx, warmup_epochs, ramp_epochs, schedule):
+    if schedule == "none":
+        return end
+    if epoch_idx < warmup_epochs:
+        return start
+    if ramp_epochs <= 0:
+        return end
+    t = (epoch_idx - warmup_epochs + 1) / float(ramp_epochs)
+    t = max(0.0, min(1.0, t))
+    if schedule == "cosine":
+        t = 0.5 * (1.0 - math.cos(math.pi * t))
+    return start + (end - start) * t
 
 
 def train(args, model,device, train_data, dev_data, test_data, processor):
@@ -72,7 +85,25 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
 
     max_acc = 0.
 
+    diag_interval = 50
     for i_epoch in trange(0, int(args.num_train_epochs), desc="Epoch", disable=False):
+        model.lambda_ratio = _schedule_lambda(
+            args.lambda_ratio_start,
+            args.lambda_ratio_end,
+            i_epoch,
+            args.lambda_warmup_epochs,
+            args.lambda_ramp_epochs,
+            args.lambda_schedule
+        )
+        model.lambda_itm = _schedule_lambda(
+            args.lambda_itm_start,
+            args.lambda_itm_end,
+            i_epoch,
+            args.lambda_warmup_epochs,
+            args.lambda_ramp_epochs,
+            args.lambda_schedule
+        )
+        wandb.log({"lambda_ratio": model.lambda_ratio, "lambda_itm": model.lambda_itm})
         sum_loss = 0.
         sum_step = 0
 
@@ -92,6 +123,8 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
             sum_step += 1
 
             iter_bar.set_description("Iter (loss=%5.3f)" % loss.item())
+            if hasattr(model, "last_cid_stats") and step % diag_interval == 0:
+                wandb.log(model.last_cid_stats)
             loss.backward()
             optimizer.step()
             if args.optimizer_name == 'adam':
