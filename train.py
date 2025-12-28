@@ -40,6 +40,19 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
     total_steps = int(len(train_loader) * args.num_train_epochs)
     model.to(device, non_blocking=True)
 
+    # Freeze CLIP if specified (for stage 1 training)
+    if hasattr(args, 'freeze_clip') and args.freeze_clip:
+        if hasattr(model, 'model'):
+            for param in model.model.parameters():
+                param.requires_grad = False
+            print("✅ CLIP model frozen for stage 1 training")
+            # Count frozen parameters
+            frozen_params = sum(p.numel() for p in model.model.parameters())
+            total_params = sum(p.numel() for p in model.parameters())
+            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            print(f"  - Frozen parameters: {frozen_params:,} ({frozen_params/total_params*100:.1f}%)")
+            print(f"  - Trainable parameters: {trainable_params:,} ({trainable_params/total_params*100:.1f}%)")
+
     if args.optimizer_name == 'adafactor':
         from transformers.optimization import Adafactor, AdafactorSchedule
 
@@ -69,10 +82,17 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
             # base_params = filter(lambda p: id(p) not in clip_params and id(p) not in bert_params
             #                      and id(p) not in resnet_params, model.parameters())
             base_params = filter(lambda p: id(p) not in clip_params, model.parameters())
-            optimizer = AdamW([
-                    {"params": base_params},
-                    {"params": model.model.parameters(),"lr": args.clip_learning_rate},
-                    ], lr=args.learning_rate, weight_decay=args.weight_decay)
+
+            # Create optimizer: if CLIP is frozen, only optimize base params
+            if hasattr(args, 'freeze_clip') and args.freeze_clip:
+                optimizer = AdamW([{"params": base_params}],
+                                 lr=args.learning_rate,
+                                 weight_decay=args.weight_decay)
+            else:
+                optimizer = AdamW([
+                        {"params": base_params},
+                        {"params": model.model.parameters(),"lr": args.clip_learning_rate},
+                        ], lr=args.learning_rate, weight_decay=args.weight_decay)
 
             scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=int(args.warmup_proportion * total_steps),
                                                     num_training_steps=total_steps)

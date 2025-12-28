@@ -280,16 +280,7 @@ class CIDModule(nn.Module):
         # s_v = max over text tokens -> [B, Lv]
         s_v = A_tv.max(dim=1).values  # [B, Lv]
 
-        # # 4b. Compute alignment scores: V -> T
-        # # A_vt = V @ T^T / tau -> [B, Lv, Lt]
-        # A_vt = torch.matmul(V, T.transpose(1, 2)) / tau  # [B, Lv, Lt]
-        # A_vt = A_vt.masked_fill(pad_mask.unsqueeze(1), -1e4)
 
-        # # s_t = max over vision patches -> [B, Lt]
-        # s_t = A_vt.max(dim=1).values  # [B, Lt]
-
-        # # Mask out padding positions in s_t
-        # s_t = s_t.masked_fill(pad_mask, -1e4)
 
         # token-side score: max over patches -> [B, Lt]
         # (No need to compute A_vt separately; it's A_tv.transpose(1,2))
@@ -314,19 +305,12 @@ class CIDModule(nn.Module):
         V_con = m_v.unsqueeze(-1) * V  # [B, Lv, 768]
         V_inc = (1 - m_v.unsqueeze(-1)) * V  # [B, Lv, 768]
 
-        # Text side
-        # T_con = m_t.unsqueeze(-1) * T  # [B, Lt, 768]
-        # T_inc = (1 - m_t.unsqueeze(-1)) * T  # [B, Lt, 768]
         T_con = m_t.unsqueeze(-1) * T  # [B, Lt, 768]
         m_t_inc = (1.0 - m_t) * valid  # pad -> 0.0
         T_inc = m_t_inc.unsqueeze(-1) * T  # [B, Lt, 768]
         # 7. L_ratio: encourage mask mean to be close to rho (bilateral)
         loss_ratio_v = (m_v.mean() - self.rho) ** 2
         # # For text, only consider non-padding positions
-        # m_t_valid = masked_mean(m_t.unsqueeze(-1), pad_mask).squeeze(-1)  # [B]
-        # loss_ratio_t = ((m_t_valid.mean() - self.rho) ** 2)  # scalar
-        # loss_ratio = loss_ratio_v + loss_ratio_t
-        # For text, compute global mean over valid tokens -> scalar
         m_t_mean = (m_t * valid).sum() / valid_den
         loss_ratio_t = (m_t_mean - self.rho_t) ** 2
         loss_ratio = loss_ratio_v + loss_ratio_t
@@ -365,19 +349,11 @@ class CIDModule(nn.Module):
         loss_itm_v = F.relu(m_v_neg.mean() - m_v.mean() + self.delta)
 
         # 8b. Text side ITM loss
-        # A_neg_t = torch.matmul(V, T_neg.transpose(1, 2)) / tau  # [B, Lv, Lt]
-        # A_neg_t = A_neg_t.masked_fill(pad_mask.unsqueeze(1), -1e4)
-        # s_t_neg = A_neg_t.max(dim=1).values  # [B, Lt]
-        # s_t_neg = s_t_neg.masked_fill(pad_mask, -1e4)
         A_neg_t = torch.matmul(T_neg, V.transpose(1, 2)) / tau  # [B, Lt, Lv]
         A_neg_t = A_neg_t.masked_fill(pad_mask.unsqueeze(-1), -1e4)
         s_t_neg = A_neg_t.max(dim=2).values  # [B, Lt]
         s_t_neg = s_t_neg.masked_fill(pad_mask, -1e4)        
         p_t_neg = F.softmax(s_t_neg, dim=-1)
-        # m_t_neg = torch.clamp(self.rho * valid_counts * p_t_neg, 0.0, 1.0)
-        # m_t_neg = m_t_neg.masked_fill(pad_mask, 0.0)
-        # m_t_neg_valid = masked_mean(m_t_neg.unsqueeze(-1), pad_mask).squeeze(-1)  # [B]
-        # loss_itm_t = F.relu(m_t_neg_valid.mean() - m_t_valid.mean() + self.delta)  # scalar
         m_t_neg = torch.clamp(self.rho_t * valid_counts * p_t_neg, 0.0, 1.0)
         m_t_neg = m_t_neg * valid
         m_t_neg_mean = (m_t_neg * valid).sum() / valid_den
@@ -455,14 +431,21 @@ class DIMMModule(nn.Module):
             nn.LayerNorm(hidden_dim)
         )
 
-        # Evidence-level gating and fusion
-        self.gate_fc = nn.Linear(hidden_dim * 4, 4)
-        self.fuse_mlp = nn.Sequential(
-            nn.Linear(hidden_dim * 4, hidden_dim * 2),
+        # Sequence-level fusion: fuse 4 text channels before pooling
+        self.seq_fusion_mha = nn.MultiheadAttention(
+            embed_dim=hidden_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True
+        )
+        self.seq_fusion_ln = nn.LayerNorm(hidden_dim)
+
+        # Final fusion MLP (text + vision)
+        self.final_mlp = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim * 2),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim * 2, hidden_dim)
-            # LayerNorm removed - will be applied later in post_ln
         )
 
     @staticmethod
@@ -484,6 +467,10 @@ class DIMMModule(nn.Module):
                                           device=pad_mask.device).bool()
                 pad_mask = torch.cat([pad_mask, extra_padding], dim=1)
 
+        # ====================================================================
+        # Text Evidence Channels (keep sequence-level, delay pooling)
+        # ====================================================================
+
         # Channel 1: Inter-Match (T_con -> V_con)
         T_match, _ = self.mha_match(
             query=T_con,
@@ -491,28 +478,29 @@ class DIMMModule(nn.Module):
             value=V_con,
             key_padding_mask=None
         )
-        T_match = self.ln_match(T_con + T_match)
-        z_match = masked_mean(T_match, pad_mask)
+        T_match = self.ln_match(T_con + T_match)  # [B, Lt, 768]
 
-        # Channel 2: Inter-Mismatch (T_con -> V_inc, T_inc -> V_con)
+        # Channel 2a: Inter-Mismatch (T_con -> V_inc)
         T_mis1, _ = self.mha_mis_tc_vi(
             query=T_con,
             key=V_inc,
             value=V_inc,
             key_padding_mask=None
         )
-        T_mis1 = self.ln_mis(T_con + T_mis1)
-        z_mis1 = masked_mean(T_mis1, pad_mask)
+        T_mis1 = self.ln_mis(T_con + T_mis1)  # [B, Lt, 768]
 
+        # Channel 2b: Inter-Mismatch (T_inc -> V_con)
         T_mis2, _ = self.mha_mis_ti_vc(
             query=T_inc,
             key=V_con,
             value=V_con,
             key_padding_mask=None
         )
-        T_mis2 = self.ln_mis(T_inc + T_mis2)
-        z_mis2 = masked_mean(T_mis2, pad_mask)
-        z_mis = self.mis_mlp(torch.cat([z_mis1, z_mis2], dim=-1))
+        T_mis2 = self.ln_mis(T_inc + T_mis2)  # [B, Lt, 768]
+
+        # Merge two mismatch directions at sequence level
+        # Use element-wise average to combine them
+        T_mis = (T_mis1 + T_mis2) / 2.0  # [B, Lt, 768]
 
         # Channel 3: Intra-Text Conflict (T_con -> T_inc)
         T_conf, _ = self.mha_tconf(
@@ -521,10 +509,36 @@ class DIMMModule(nn.Module):
             value=T_inc,
             key_padding_mask=pad_mask
         )
-        T_conf = self.ln_tconf(T_con + T_conf)
-        z_tconf = masked_mean(T_conf, pad_mask)
+        T_conf = self.ln_tconf(T_con + T_conf)  # [B, Lt, 768]
 
-        # Channel 4: Intra-Vision Conflict (V_con -> V_inc)
+        # ====================================================================
+        # Sequence-level Fusion: Concatenate 4 channels and fuse with MHA
+        # ====================================================================
+
+        # Concatenate 4 text channels along sequence dimension
+        # Shape: [B, 4*Lt, 768]
+        T_all = torch.cat([T_match, T_mis, T_conf, T_con], dim=1)
+
+        # Extend pad_mask for concatenated sequence
+        # Repeat pad_mask 4 times (one for each channel)
+        pad_mask_extended = torch.cat([pad_mask, pad_mask, pad_mask, pad_mask], dim=1)  # [B, 4*Lt]
+
+        # Apply self-attention to fuse across channels
+        T_fused, _ = self.seq_fusion_mha(
+            query=T_all,
+            key=T_all,
+            value=T_all,
+            key_padding_mask=pad_mask_extended
+        )
+        T_fused = self.seq_fusion_ln(T_all + T_fused)  # Residual connection
+
+        # Pool to get text representation
+        z_text = masked_mean(T_fused, pad_mask_extended)  # [B, 768]
+
+        # ====================================================================
+        # Vision Channel 4: Intra-Vision Conflict (V_con -> V_inc)
+        # ====================================================================
+
         if m_v is None:
             m_v = torch.ones(V_con.size(0), V_con.size(1),
                              dtype=V_con.dtype, device=V_con.device)
@@ -544,29 +558,20 @@ class DIMMModule(nn.Module):
             key_padding_mask=v_mask
         )
         V_conf = self.ln_vconf(V_con + V_conf)
-        z_vconf = self._weighted_pool(V_conf, m_v)
+        z_vision = self._weighted_pool(V_conf, m_v)  # [B, 768]
 
-        # Evidence-level gating fusion
-        gate_logits = self.gate_fc(torch.cat([z_match, z_mis, z_tconf, z_vconf], dim=-1))
-        gate = F.softmax(gate_logits, dim=-1)
-        z = self.fuse_mlp(torch.cat([
-            gate[:, 0:1] * z_match,
-            gate[:, 1:2] * z_mis,
-            gate[:, 2:3] * z_tconf,
-            gate[:, 3:4] * z_vconf
-        ], dim=-1))
-        return z
+        # ====================================================================
+        # Final Fusion: Combine text and vision
+        # ====================================================================
+
+        z_cid = self.final_mlp(torch.cat([z_text, z_vision], dim=-1))  # [B, 768]
+        return z_cid
 
 
 class RCLMuFN(nn.Module):
     def __init__(self, args):
         super(RCLMuFN, self).__init__()
         self.model = CLIPModel.from_pretrained("/home/user/chengtaiyu/models/clip-vit-base-patch32")
-        # BERT-related initialization (disabled).
-        # self.config = BertConfig.from_pretrained("/home/user/chengtaiyu/models/bert-base-uncased")
-        # self.config.hidden_size = 768
-        # self.config.num_attention_heads = 8
-        # self.trans = MultimodalEncoder(self.config, layer_number=args.layers)
         if args.simple_linear:
             self.text_linear =  nn.Linear(args.text_size, args.image_size)
             self.image_linear =  nn.Linear(args.image_size, args.image_size)
@@ -592,13 +597,9 @@ class RCLMuFN(nn.Module):
         self.nheads = 8
         self.dim_feedforward = 2048
         # ==========================
-        # Post-DIMM Fusion (cat kv across batch)
+        # Post-DIMM: Simple LayerNorm for final output
         # ==========================
-        self.post_gate = nn.Linear(768 * 2, 768)
         self.post_ln = nn.LayerNorm(768)
-
-        # Optional: gate 初期更小，避免一开始就覆盖 DIMM
-        nn.init.constant_(self.post_gate.bias, -2.0)
 
         self.txt2 = nn.Sequential(nn.Linear(self.d_model*2, self.d_model),
                                  nn.ReLU(),
@@ -771,52 +772,8 @@ class RCLMuFN(nn.Module):
         # Scheme A: use CID as the main branch
         # res_new = cid_hat  # [B, 768]
 
-        # ========================================================================
 
-        # # CLIP-View Feature Fusion
-        # cross_feature_text = self.cross_att(text_feature, image_feature, image_feature)  # 32,768
-        # cross_feature_image = self.cross_att(image_feature, text_feature, text_feature)  # 32,768
-        # # fuse_feature = 0.7 * cross_feature_text + 0.3 * cross_feature_image
-        # fuse_alpha = torch.softmax(self.fuse_weight, dim=0)
-        # fuse_feature = fuse_alpha[0] * cross_feature_text + fuse_alpha[1] * cross_feature_image
-        # fuse = self.ln_fuse(fuse_feature)
-        # cid = self.ln_cid(cid_hat)
-
-        # # Gated residual fusion
-        # g = torch.sigmoid(self.gate_fc(torch.cat([fuse, cid], dim=-1)))  # [B, 768]
-        # output = fuse + g * cid  # [B, 768]
-
-        # # Predict
-        # logits_fuse = self.classifier_fuse(output)  # 64,2  output
-        # fuse_score = nn.functional.softmax(logits_fuse, dim=-1)  # 64,2
-        
-        # score = fuse_score
-        # output = self.ln_cid(cid_hat)
-        # logits_fuse = self.classifier_fuse(output)
-        # score = nn.functional.softmax(logits_fuse, dim=-1)
-        # ==========================================================
-        # Cross-sample attention fusion with kv = cat([t_pool, v_pool], dim=0)
-        # Query: cid_hat  -> [B, 768]
-        # Key/Value: kv   -> [2B, 768]
-        # Attention scores inside CrossAttention will be [B, 2B]
-        # ==========================================================
-
-        # pooled features (already projected to 768 in your code)
-        t_pool = text_feature   # [B, 768]
-        v_pool = image_feature  # [B, 768]
-
-        # concatenate along batch dimension -> [2B, 768]
-        # kv = torch.cat([t_pool, v_pool], dim=0)  # [2B, 768]
-        kv = torch.stack([t_pool, v_pool], dim=1)
-        q = cid_hat.unsqueeze(1)
-
-        # IMPORTANT: keep query/key/value as 2D to trigger [B, 2B] attention
-        # attn_out = self.cross_att(cid_hat, kv, kv)  # [B, 768]
-        attn_out = self.cross_att(q, kv, kv).squeeze(1)  # [B, 768]
-
-        # gated residual fusion (recommended)
-        g = torch.sigmoid(self.post_gate(torch.cat([cid_hat, attn_out], dim=-1)))  # [B, 768]
-        z_final = self.post_ln(cid_hat + g * attn_out)  # [B, 768]
+        z_final = self.post_ln(cid_hat)  # [B, 768]
 
         # Predict
         logits_fuse = self.classifier_fuse(z_final)  # [B, num_labels]

@@ -1,0 +1,12 @@
+{"time":"2025-12-28T21:52:40.844755308+08:00","level":"INFO","msg":"stream: starting","core version":"0.23.1"}
+{"time":"2025-12-28T21:52:40.984754079+08:00","level":"WARN","msg":"featurechecker: GraphQL client is nil, skipping feature loading"}
+{"time":"2025-12-28T21:52:40.98487878+08:00","level":"INFO","msg":"stream: created new stream","id":"ird32zlz"}
+{"time":"2025-12-28T21:52:40.984939005+08:00","level":"INFO","msg":"handler: started","stream_id":"ird32zlz"}
+{"time":"2025-12-28T21:52:40.985144977+08:00","level":"INFO","msg":"stream: started","id":"ird32zlz"}
+{"time":"2025-12-28T21:52:40.9851618+08:00","level":"INFO","msg":"writer: started","stream_id":"ird32zlz"}
+{"time":"2025-12-28T21:52:40.985186064+08:00","level":"INFO","msg":"sender: started","stream_id":"ird32zlz"}
+{"time":"2025-12-28T21:52:40.986310475+08:00","level":"WARN","msg":"runupserter: server does not expand metric globs but the x_server_side_expand_glob_metrics setting is set; ignoring"}
+{"time":"2025-12-28T22:32:43.650824489+08:00","level":"INFO","msg":"stream: closing","id":"ird32zlz"}
+{"time":"2025-12-28T22:32:43.651180397+08:00","level":"INFO","msg":"handler: closed","stream_id":"ird32zlz"}
+{"time":"2025-12-28T22:32:43.651263045+08:00","level":"INFO","msg":"sender: closed","stream_id":"ird32zlz"}
+{"time":"2025-12-28T22:32:43.651286342+08:00","level":"INFO","msg":"stream: closed","id":"ird32zlz"}
