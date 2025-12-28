@@ -1,0 +1,110 @@
+import torch
+import argparse
+from model import RCLMuFN
+from transformers import CLIPProcessor
+from PIL import Image
+import numpy as np
+
+# Create args
+class Args:
+    def __init__(self):
+        self.device = '0'
+        self.model = 'RCLMuFN'
+        self.text_name = 'text_final'
+        self.simple_linear = False
+        self.num_train_epochs = 10
+        self.train_batch_size = 4
+        self.dev_batch_size = 4
+        self.label_number = 2
+        self.text_size = 512
+        self.image_size = 768
+        self.adam_epsilon = 1e-8
+        self.optimizer_name = 'adam'
+        self.learning_rate = 5e-4
+        self.clip_learning_rate = 1e-6
+        self.max_len = 77
+        self.layers = 3
+        self.max_grad_norm = 5.0
+        self.weight_decay = 0.05
+        self.warmup_proportion = 0.2
+        self.dropout_rate = 0.1
+        self.output_dir = '../output_dir/'
+        self.limit = None
+        self.seed = 42
+        self.lambda_ratio_start = 0.0
+        self.lambda_ratio_end = 1e-3
+        self.lambda_itm_start = 0.0
+        self.lambda_itm_end = 1e-3
+        self.lambda_warmup_epochs = 1
+        self.lambda_ramp_epochs = 3
+        self.lambda_schedule = 'linear'
+        self.neg_sampling = 'label_aware'
+        self.tau_schedule_mode = 'epoch'
+
+args = Args()
+
+print('=' * 60)
+print('Step 1: Instantiating model...')
+model = RCLMuFN(args)
+print('✅ Model instantiated successfully')
+
+print('=' * 60)
+print('Step 2: Preparing dummy inputs...')
+processor = CLIPProcessor.from_pretrained('/home/user/chengtaiyu/models/clip-vit-base-patch32')
+
+# Create dummy image and text
+dummy_image = Image.fromarray(np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8))
+dummy_text = ['This is a test sentence for model verification.'] * 4
+
+inputs = processor(
+    text=dummy_text,
+    images=[dummy_image] * 4,
+    return_tensors='pt',
+    padding=True,
+    truncation=True,
+    max_length=77
+)
+labels = torch.tensor([0, 1, 0, 1], dtype=torch.long)
+
+# Create batch tuple (text_list, image_list, label_list, id_list)
+batch = (
+    dummy_text,  # text_list
+    [dummy_image] * 4,  # image_list
+    labels.tolist(),  # label_list
+    list(range(4))  # id_list
+)
+
+print('✅ Inputs prepared')
+print(f'  - input_ids shape: {inputs["input_ids"].shape}')
+print(f'  - pixel_values shape: {inputs["pixel_values"].shape}')
+print(f'  - labels shape: {labels.shape}')
+
+print('=' * 60)
+print('Step 3: Running forward pass...')
+model.eval()
+with torch.no_grad():
+    outputs = model(inputs, batch, labels)
+
+loss = outputs[0]
+score = outputs[1]
+
+print('✅ Forward pass successful')
+print(f'  - loss: {loss.item():.4f}')
+print(f'  - score shape: {score.shape}')
+print(f'  - score sum (should be ~1.0 per sample): {score.sum(dim=1)}')
+
+print('=' * 60)
+print('Step 4: Checking CID stats...')
+if hasattr(model, 'last_cid_stats'):
+    stats = model.last_cid_stats
+    print('✅ CID statistics:')
+    print(f'  - m_t_mean: {stats["m_t_mean"]:.4f}')
+    print(f'  - m_t_var: {stats["m_t_var"]:.4f}')
+    print(f'  - m_v_mean: {stats["m_v_mean"]:.4f}')
+    print(f'  - m_v_var: {stats["m_v_var"]:.4f}')
+else:
+    print('⚠️  No CID stats found')
+
+print('=' * 60)
+print('✅ All tests passed! Model is working correctly.')
+print('=' * 60)

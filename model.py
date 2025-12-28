@@ -124,13 +124,13 @@ class CrossAttention(nn.Module):
         self.dropout = nn.Dropout(dropout_prob)
 
     def forward(self, query, key, value, key_padding_mask=None):
-        # # Avoid cross-sample attention when inputs are [B, D]
-        # squeezed = False
-        # if query.dim() == 2:
-        #     query = query.unsqueeze(1)
-        #     key = key.unsqueeze(1)
-        #     value = value.unsqueeze(1)
-        #     squeezed = True
+        # Avoid cross-sample attention when inputs are [B, D]
+        squeezed = False
+        if query.dim() == 2:
+            query = query.unsqueeze(1)
+            key = key.unsqueeze(1)
+            value = value.unsqueeze(1)
+            squeezed = True
         if query.shape[-1] != 768:
             query = self.text_linear(query)
         if key.shape[-1] != 768:
@@ -149,8 +149,8 @@ class CrossAttention(nn.Module):
         attention_weights = F.softmax(attention_scores, dim=-1)
         attended_values = torch.matmul(attention_weights, value)
         attended_values = self.dropout(attended_values)
-        # if squeezed:
-        #     attended_values = attended_values.squeeze(1)
+        if squeezed:
+            attended_values = attended_values.squeeze(1)
         return attended_values
 
 
@@ -180,7 +180,7 @@ class CIDModule(nn.Module):
 
     def __init__(self, text_dim=512, vision_dim=768, hidden_dim=768,
                  rho=0.3, rho_t=0.5, delta=0.1, tau0=1.0, tau_min=0.4, decay=0.9995,
-                 neg_sampling="label_aware"):
+                 neg_sampling="label_aware", tau_schedule_mode='step'):
         super(CIDModule, self).__init__()
 
         # Project text from 512 to 768
@@ -189,15 +189,44 @@ class CIDModule(nn.Module):
 
         # Hyperparameters
         self.rho = rho  # target ratio for consistent patches/tokens
-        self.rho_t = rho_t 
+        self.rho_t = rho_t
         self.delta = delta  # margin for ITM loss
         self.tau0 = tau0  # initial temperature
         self.tau_min = tau_min  # minimum temperature
         self.decay = decay  # temperature decay rate
         self.neg_sampling = neg_sampling
+        self.tau_schedule_mode = tau_schedule_mode  # 'step' or 'epoch'
 
-        # Temperature annealing: maintain global step as buffer
+        # Temperature annealing: maintain global step/epoch as buffer
         self.register_buffer('global_step', torch.tensor(0, dtype=torch.long))
+        self.register_buffer('current_epoch', torch.tensor(0, dtype=torch.long))
+        self.register_buffer('current_tau', torch.tensor(tau0, dtype=torch.float))
+
+    def set_epoch(self, epoch):
+        """
+        Set current epoch for epoch-based temperature scheduling.
+        Call this at the beginning of each training epoch for better control.
+
+        Args:
+            epoch: current epoch number (0-indexed)
+        """
+        self.current_epoch.fill_(epoch)
+        # Update temperature based on epoch
+        if self.tau_schedule_mode == 'epoch':
+            # Epoch-based decay: tau = tau0 * (decay ** epoch)
+            # With decay=0.95, tau reaches tau_min in ~10-12 epochs
+            epoch_decay = 0.95  # Slower decay than step-based
+            tau = max(self.tau_min, self.tau0 * (epoch_decay ** epoch))
+            self.current_tau.fill_(tau)
+
+    def set_tau(self, tau):
+        """
+        Manually set temperature value.
+
+        Args:
+            tau: temperature value to set
+        """
+        self.current_tau.fill_(max(self.tau_min, tau))
 
     def forward(self, T_tok, V_tok, attn_mask, labels: Optional[torch.Tensor] = None):
         """
@@ -222,12 +251,22 @@ class CIDModule(nn.Module):
 
         # 2. Create padding mask (True = padding)
         pad_mask = (attn_mask == 0)  # [B, Lt]
-        valid = (~pad_mask).float() 
+        valid = (~pad_mask).float()
         valid_den = valid.sum().clamp_min(1.0)  # scalar
-        # 3. Temperature annealing
-        if self.training:
-            self.global_step += 1
-        tau = max(self.tau_min, self.tau0 * (self.decay ** self.global_step.item()))
+
+        # 3. Temperature annealing (supports 'step' or 'epoch' mode)
+        if self.tau_schedule_mode == 'step':
+            # Step-based decay (original implementation)
+            if self.training:
+                self.global_step += 1
+            tau = max(self.tau_min, self.tau0 * (self.decay ** self.global_step.item()))
+        elif self.tau_schedule_mode == 'epoch':
+            # Epoch-based decay (updated via set_epoch())
+            # Use pre-computed current_tau from set_epoch()
+            tau = self.current_tau.item()
+        else:
+            # Fallback to initial temperature
+            tau = self.tau0
 
         # ====================================================================
         # Bilateral Decomposition: Text and Vision
@@ -354,107 +393,85 @@ class CIDModule(nn.Module):
 
 class DIMMModule(nn.Module):
     """
-    DIMM Module for bilateral reasoning over consistent/inconsistent interactions.
-
-    Inputs:
-        - T_con: [B, Lt, 768] consistent text tokens
-        - T_inc: [B, Lt, 768] inconsistent text tokens
-        - V_con: [B, Lv, 768] consistent vision patches
-        - V_inc: [B, Lv, 768] inconsistent vision patches
-        - pad_mask: [B, Lt] padding mask (True=pad)
-
-    Outputs:
-        - z_cid: [B, 768] unified CID representation
+    DIMM Module with 4 evidence channels:
+        1) Inter-Match (T_con -> V_con)
+        2) Inter-Mismatch (T_con -> V_inc, T_inc -> V_con)
+        3) Intra-Text Conflict (T_con -> T_inc)
+        4) Intra-Vision Conflict (V_con -> V_inc)
     """
 
-    def __init__(self, hidden_dim=768, num_heads=8, dropout=0.1, num_encoder_layers=1):
+    def __init__(self, hidden_dim=768, num_heads=8, dropout=0.1,
+                 vision_conf_threshold=0.1):
         super(DIMMModule, self).__init__()
+        self.vision_conf_threshold = vision_conf_threshold
 
-        # Multi-head attention for consistent-consistent interaction
-        self.mha_con_con = nn.MultiheadAttention(
+        # Inter-Match
+        self.mha_match = nn.MultiheadAttention(
             embed_dim=hidden_dim,
             num_heads=num_heads,
             dropout=dropout,
             batch_first=True
         )
 
-        # Multi-head attention for inconsistent-inconsistent interaction
-        self.mha_inc_inc = nn.MultiheadAttention(
+        # Inter-Mismatch (two directions)
+        self.mha_mis_tc_vi = nn.MultiheadAttention(
+            embed_dim=hidden_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True
+        )
+        self.mha_mis_ti_vc = nn.MultiheadAttention(
             embed_dim=hidden_dim,
             num_heads=num_heads,
             dropout=dropout,
             batch_first=True
         )
 
-        # Multi-head attention for cross interaction (consistent text -> inconsistent vision)
-        self.mha_cross1 = nn.MultiheadAttention(
+        # Intra-Text Conflict
+        self.mha_tconf = nn.MultiheadAttention(
             embed_dim=hidden_dim,
             num_heads=num_heads,
             dropout=dropout,
             batch_first=True
         )
 
-        # Multi-head attention for cross interaction (inconsistent text -> consistent vision)
-        self.mha_cross2 = nn.MultiheadAttention(
+        # Intra-Vision Conflict
+        self.mha_vconf = nn.MultiheadAttention(
             embed_dim=hidden_dim,
             num_heads=num_heads,
             dropout=dropout,
             batch_first=True
         )
 
-        # Transformer encoder for text intra-modality reasoning
-        encoder_layer_t = nn.TransformerEncoderLayer(
-            d_model=hidden_dim,
-            nhead=num_heads,
-            dim_feedforward=hidden_dim * 4,
-            dropout=dropout,
-            batch_first=True
-        )
-        self.transformer_encoder_t = nn.TransformerEncoder(
-            encoder_layer_t,
-            num_layers=num_encoder_layers
-        )
+        self.ln_match = nn.LayerNorm(hidden_dim)
+        self.ln_mis = nn.LayerNorm(hidden_dim)  # Shared LN for both mismatch directions
+        self.ln_tconf = nn.LayerNorm(hidden_dim)
+        self.ln_vconf = nn.LayerNorm(hidden_dim)
 
-        # Transformer encoder for vision intra-modality reasoning
-        encoder_layer_v = nn.TransformerEncoderLayer(
-            d_model=hidden_dim,
-            nhead=num_heads,
-            dim_feedforward=hidden_dim * 4,
-            dropout=dropout,
-            batch_first=True
-        )
-        self.transformer_encoder_v = nn.TransformerEncoder(
-            encoder_layer_v,
-            num_layers=num_encoder_layers
-        )
-
-        # Layer norms for each pathway
-        self.ln_con_con = nn.LayerNorm(hidden_dim)
-        self.ln_inc_inc = nn.LayerNorm(hidden_dim)
-        self.ln_cross1 = nn.LayerNorm(hidden_dim)
-        self.ln_cross2 = nn.LayerNorm(hidden_dim)
-
-        # Final projection MLP (6 pathways: con-con, inc-inc, cross1, cross2, intra-t, intra-v)
-        self.mlp = nn.Sequential(
-            nn.Linear(hidden_dim * 6, hidden_dim * 3),
+        self.mis_mlp = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim * 3, hidden_dim),
             nn.LayerNorm(hidden_dim)
         )
 
-    def forward(self, T_con, T_inc, V_con, V_inc, pad_mask):
-        """
-        Args:
-            T_con: [B, Lt, 768] consistent text tokens
-            T_inc: [B, Lt, 768] inconsistent text tokens
-            V_con: [B, Lv, 768] consistent vision patches
-            V_inc: [B, Lv, 768] inconsistent vision patches
-            pad_mask: [B, Lt] padding mask (True=pad)
+        # Evidence-level gating and fusion
+        self.gate_fc = nn.Linear(hidden_dim * 4, 4)
+        self.fuse_mlp = nn.Sequential(
+            nn.Linear(hidden_dim * 4, hidden_dim * 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim * 2, hidden_dim)
+            # LayerNorm removed - will be applied later in post_ln
+        )
 
-        Returns:
-            z_cid: [B, 768] unified representation
-        """
+    @staticmethod
+    def _weighted_pool(x: torch.Tensor, weights: torch.Tensor):
+        weights = weights.clamp_min(0.0)
+        denom = weights.sum(dim=1, keepdim=True).clamp_min(1e-6)
+        return (x * weights.unsqueeze(-1)).sum(dim=1) / denom
+
+    def forward(self, T_con, T_inc, V_con, V_inc, pad_mask, m_v=None):
         # Ensure pad_mask matches sequence length
         if pad_mask.size(1) != T_con.size(1):
             if pad_mask.size(1) > T_con.size(1):
@@ -467,89 +484,78 @@ class DIMMModule(nn.Module):
                                           device=pad_mask.device).bool()
                 pad_mask = torch.cat([pad_mask, extra_padding], dim=1)
 
-        # ====================================================================
-        # 1. Consistent-Consistent Interaction: T_con <-> V_con
-        # ====================================================================
-        T_con_enh, _ = self.mha_con_con(
+        # Channel 1: Inter-Match (T_con -> V_con)
+        T_match, _ = self.mha_match(
             query=T_con,
             key=V_con,
             value=V_con,
-            key_padding_mask=None  # Vision has no padding
-        )
-        T_con_enh = self.ln_con_con(T_con + T_con_enh)
-        z_con_con = masked_mean(T_con_enh, pad_mask)  # [B, 768]
-
-        # ====================================================================
-        # 2. Inconsistent-Inconsistent Interaction: T_inc <-> V_inc
-        # ====================================================================
-        T_inc_enh, _ = self.mha_inc_inc(
-            query=T_inc,
-            key=V_inc,
-            value=V_inc,
             key_padding_mask=None
         )
-        T_inc_enh = self.ln_inc_inc(T_inc + T_inc_enh)
-        z_inc_inc = masked_mean(T_inc_enh, pad_mask)  # [B, 768]
+        T_match = self.ln_match(T_con + T_match)
+        z_match = masked_mean(T_match, pad_mask)
 
-        # ====================================================================
-        # 3. Cross Interaction 1: T_con <-> V_inc
-        # ====================================================================
-        T_cross1, _ = self.mha_cross1(
+        # Channel 2: Inter-Mismatch (T_con -> V_inc, T_inc -> V_con)
+        T_mis1, _ = self.mha_mis_tc_vi(
             query=T_con,
             key=V_inc,
             value=V_inc,
             key_padding_mask=None
         )
-        T_cross1 = self.ln_cross1(T_cross1)
-        z_cross1 = masked_mean(T_cross1, pad_mask)  # [B, 768]
+        T_mis1 = self.ln_mis(T_con + T_mis1)
+        z_mis1 = masked_mean(T_mis1, pad_mask)
 
-        # ====================================================================
-        # 4. Cross Interaction 2: T_inc <-> V_con
-        # ====================================================================
-        T_cross2, _ = self.mha_cross2(
+        T_mis2, _ = self.mha_mis_ti_vc(
             query=T_inc,
             key=V_con,
             value=V_con,
             key_padding_mask=None
         )
-        T_cross2 = self.ln_cross2(T_cross2)
-        z_cross2 = masked_mean(T_cross2, pad_mask)  # [B, 768]
+        T_mis2 = self.ln_mis(T_inc + T_mis2)
+        z_mis2 = masked_mean(T_mis2, pad_mask)
+        z_mis = self.mis_mlp(torch.cat([z_mis1, z_mis2], dim=-1))
 
-        # ====================================================================
-        # 5. Intra-modality Reasoning: Text
-        # ====================================================================
-        # Combine T_con and T_inc for intra-text reasoning
-        T_combined = T_con + T_inc  # [B, Lt, 768]
-        T_intra = self.transformer_encoder_t(
-            T_combined,
-            src_key_padding_mask=pad_mask
+        # Channel 3: Intra-Text Conflict (T_con -> T_inc)
+        T_conf, _ = self.mha_tconf(
+            query=T_con,
+            key=T_inc,
+            value=T_inc,
+            key_padding_mask=pad_mask
         )
-        z_intra_t = masked_mean(T_intra, pad_mask)  # [B, 768]
+        T_conf = self.ln_tconf(T_con + T_conf)
+        z_tconf = masked_mean(T_conf, pad_mask)
 
-        # ====================================================================
-        # 6. Intra-modality Reasoning: Vision
-        # ====================================================================
-        # Combine V_con and V_inc for intra-vision reasoning
-        V_combined = V_con + V_inc  # [B, Lv, 768]
-        V_intra = self.transformer_encoder_v(
-            V_combined,
-            src_key_padding_mask=None  # Vision has no padding
+        # Channel 4: Intra-Vision Conflict (V_con -> V_inc)
+        if m_v is None:
+            m_v = torch.ones(V_con.size(0), V_con.size(1),
+                             dtype=V_con.dtype, device=V_con.device)
+        if m_v.size(1) != V_con.size(1):
+            if m_v.size(1) > V_con.size(1):
+                m_v = m_v[:, :V_con.size(1)]
+            else:
+                extra_len = V_con.size(1) - m_v.size(1)
+                extra = torch.ones(m_v.size(0), extra_len,
+                                   dtype=m_v.dtype, device=m_v.device)
+                m_v = torch.cat([m_v, extra], dim=1)
+        v_mask = (m_v < self.vision_conf_threshold)
+        V_conf, _ = self.mha_vconf(
+            query=V_con,
+            key=V_inc,
+            value=V_inc,
+            key_padding_mask=v_mask
         )
-        z_intra_v = V_intra.mean(dim=1)  # [B, 768]
+        V_conf = self.ln_vconf(V_con + V_conf)
+        z_vconf = self._weighted_pool(V_conf, m_v)
 
-        # ====================================================================
-        # 7. Combine all pathways
-        # ====================================================================
-        z_cid = self.mlp(torch.cat([
-            z_con_con,   # Consistent-consistent
-            z_inc_inc,   # Inconsistent-inconsistent
-            z_cross1,    # T_con -> V_inc
-            z_cross2,    # T_inc -> V_con
-            z_intra_t,   # Text self-attention
-            z_intra_v    # Vision self-attention
-        ], dim=-1))  # [B, 768]
-
-        return z_cid
+        # Evidence-level gating fusion
+        gate_logits = self.gate_fc(torch.cat([z_match, z_mis, z_tconf, z_vconf], dim=-1))
+        gate = F.softmax(gate_logits, dim=-1)
+        z = self.fuse_mlp(torch.cat([
+            gate[:, 0:1] * z_match,
+            gate[:, 1:2] * z_mis,
+            gate[:, 2:3] * z_tconf,
+            gate[:, 3:4] * z_vconf
+        ], dim=-1))
+        return z
 
 
 class RCLMuFN(nn.Module):
@@ -585,6 +591,14 @@ class RCLMuFN(nn.Module):
         self.d_model = 768
         self.nheads = 8
         self.dim_feedforward = 2048
+        # ==========================
+        # Post-DIMM Fusion (cat kv across batch)
+        # ==========================
+        self.post_gate = nn.Linear(768 * 2, 768)
+        self.post_ln = nn.LayerNorm(768)
+
+        # Optional: gate 初期更小，避免一开始就覆盖 DIMM
+        nn.init.constant_(self.post_gate.bias, -2.0)
 
         self.txt2 = nn.Sequential(nn.Linear(self.d_model*2, self.d_model),
                                  nn.ReLU(),
@@ -621,13 +635,13 @@ class RCLMuFN(nn.Module):
             tau0=1.0,
             tau_min=0.4,
             decay=0.9995,
-            neg_sampling=args.neg_sampling
+            neg_sampling=args.neg_sampling,
+            tau_schedule_mode=getattr(args, 'tau_schedule_mode', 'step')  # 'step' or 'epoch'
         )
         self.dimm = DIMMModule(
             hidden_dim=768,
             num_heads=8,
-            dropout=0.1,
-            num_encoder_layers=1
+            dropout=0.1
         )
 
         # Alignment and connection layers
@@ -644,9 +658,22 @@ class RCLMuFN(nn.Module):
         self.pre_ln_t = nn.LayerNorm(768)
         self.pre_ln_v = nn.LayerNorm(768)
 
-        # Loss weights (start conservative, can increase during training)
-        self.lambda_ratio = 0  # Reduced from 1.0 to avoid over-constraining
-        self.lambda_itm = 0   # Restored from 0.0 to prevent mask collapse
+        # Loss weights (dynamically scheduled by train.py, these are initial values)
+        # NOTE: train.py will override these values at the start of each epoch
+        # using _schedule_lambda() based on args.lambda_*_start/end
+        self.lambda_ratio = getattr(args, 'lambda_ratio_start', 0.0)
+        self.lambda_itm = getattr(args, 'lambda_itm_start', 0.0)
+
+    def set_epoch(self, epoch):
+        """
+        Set current epoch for temperature scheduling in CID module.
+        Call this at the beginning of each training epoch.
+
+        Args:
+            epoch: current epoch number (0-indexed)
+        """
+        if hasattr(self, 'cid'):
+            self.cid.set_epoch(epoch)
 
     def forward(self, inputs, batch, labels):
         output = self.model(**inputs,output_attentions=False)
@@ -683,12 +710,18 @@ class RCLMuFN(nn.Module):
         # ========================================================================
         T_proj = self.cid.text_proj(text_features)
         pre_alpha = self.alpha_pre
-        T_ref = T_proj + pre_alpha * self.cross_att(
-            T_proj, image_features, image_features
-        )
+
+        # Text cross-attend to vision (no key_padding_mask needed for vision)
+        T_attn = self.cross_att(T_proj, image_features, image_features)
+        # Mask out padding positions in query (text) side after attention
+        T_attn = T_attn.masked_fill(pad_mask.unsqueeze(-1), 0.0)
+        T_ref = T_proj + pre_alpha * T_attn
+
+        # Vision cross-attend to text (with key_padding_mask for text)
         V_ref = image_features + pre_alpha * self.cross_att(
             image_features, T_proj, T_proj, key_padding_mask=pad_mask
         )
+
         T_ref = self.pre_ln_t(T_ref)
         V_ref = self.pre_ln_v(V_ref)
 
@@ -713,10 +746,10 @@ class RCLMuFN(nn.Module):
         }
 
         # Run DIMM module (bilateral interaction)
-        z_cid = self.dimm(T_con, T_inc, V_con, V_inc, pad_mask)  # [B, 768]
+        z_cid = self.dimm(T_con, T_inc, V_con, V_inc, pad_mask, m_v=m_v)  # [B, 768]
 
-        # Project and normalize CID output
-        cid_hat = self.cid_ln(self.cid_proj(z_cid))  # [B, 768]
+        # Project and normalize CID output with residual connection
+        cid_hat = self.cid_ln(z_cid + self.cid_proj(z_cid))  # LN(z_cid + W*z_cid)
         # ========================================================================
 
         image_t = image_feature
@@ -756,10 +789,37 @@ class RCLMuFN(nn.Module):
         # # Predict
         # logits_fuse = self.classifier_fuse(output)  # 64,2  output
         # fuse_score = nn.functional.softmax(logits_fuse, dim=-1)  # 64,2
-
+        
         # score = fuse_score
-        output = self.ln_cid(cid_hat)
-        logits_fuse = self.classifier_fuse(output)
+        # output = self.ln_cid(cid_hat)
+        # logits_fuse = self.classifier_fuse(output)
+        # score = nn.functional.softmax(logits_fuse, dim=-1)
+        # ==========================================================
+        # Cross-sample attention fusion with kv = cat([t_pool, v_pool], dim=0)
+        # Query: cid_hat  -> [B, 768]
+        # Key/Value: kv   -> [2B, 768]
+        # Attention scores inside CrossAttention will be [B, 2B]
+        # ==========================================================
+
+        # pooled features (already projected to 768 in your code)
+        t_pool = text_feature   # [B, 768]
+        v_pool = image_feature  # [B, 768]
+
+        # concatenate along batch dimension -> [2B, 768]
+        # kv = torch.cat([t_pool, v_pool], dim=0)  # [2B, 768]
+        kv = torch.stack([t_pool, v_pool], dim=1)
+        q = cid_hat.unsqueeze(1)
+
+        # IMPORTANT: keep query/key/value as 2D to trigger [B, 2B] attention
+        # attn_out = self.cross_att(cid_hat, kv, kv)  # [B, 768]
+        attn_out = self.cross_att(q, kv, kv).squeeze(1)  # [B, 768]
+
+        # gated residual fusion (recommended)
+        g = torch.sigmoid(self.post_gate(torch.cat([cid_hat, attn_out], dim=-1)))  # [B, 768]
+        z_final = self.post_ln(cid_hat + g * attn_out)  # [B, 768]
+
+        # Predict
+        logits_fuse = self.classifier_fuse(z_final)  # [B, num_labels]
         score = nn.functional.softmax(logits_fuse, dim=-1)
 
         outputs = (score,) # (64,2)

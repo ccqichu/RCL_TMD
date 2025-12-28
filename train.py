@@ -87,6 +87,11 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
 
     diag_interval = 50
     for i_epoch in trange(0, int(args.num_train_epochs), desc="Epoch", disable=False):
+        # Set current epoch for temperature scheduling in CID module
+        if hasattr(model, 'set_epoch'):
+            model.set_epoch(i_epoch)
+
+        # Schedule lambda weights for CID losses
         model.lambda_ratio = _schedule_lambda(
             args.lambda_ratio_start,
             args.lambda_ratio_end,
@@ -103,7 +108,12 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
             args.lambda_ramp_epochs,
             args.lambda_schedule
         )
-        wandb.log({"lambda_ratio": model.lambda_ratio, "lambda_itm": model.lambda_itm})
+
+        # Log scheduled parameters
+        log_dict = {"lambda_ratio": model.lambda_ratio, "lambda_itm": model.lambda_itm}
+        if hasattr(model, 'cid') and hasattr(model.cid, 'current_tau'):
+            log_dict["tau"] = model.cid.current_tau.item()
+        wandb.log(log_dict)
         sum_loss = 0.
         sum_step = 0
 

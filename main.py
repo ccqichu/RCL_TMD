@@ -21,8 +21,8 @@ def set_args():
     parser.add_argument('--text_name', default='text_final', type=str, help='the text data folder name')
     parser.add_argument('--simple_linear', default=False, type=bool, help='linear implementation choice')
     parser.add_argument('--num_train_epochs', default=10, type=int, help='number of train epoched')
-    parser.add_argument('--train_batch_size', default=32, type=int, help='batch size in train phase')
-    parser.add_argument('--dev_batch_size', default=32, type=int, help='batch size in dev phase')
+    parser.add_argument('--train_batch_size', default=128, type=int, help='batch size in train phase')
+    parser.add_argument('--dev_batch_size', default=128, type=int, help='batch size in dev phase')
     parser.add_argument('--label_number', default=2, type=int, help='the number of classification labels') # 仇恨，非仇恨
     parser.add_argument('--text_size', default=512, type=int, help='text hidden size')
     parser.add_argument('--image_size', default=768, type=int, help='image hidden size')
@@ -51,6 +51,9 @@ def set_args():
     parser.add_argument('--neg_sampling', default='label_aware', type=str,
                         choices=['shuffle', 'label_aware', 'low_sim'],
                         help='negative sampling strategy for CID ITM loss')
+    parser.add_argument('--tau_schedule_mode', default='step', type=str,
+                        choices=['step', 'epoch'],
+                        help='temperature annealing schedule: step-based (per batch) or epoch-based')
 
 
     # * Backbone (disabled)
