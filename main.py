@@ -49,7 +49,7 @@ def set_args():
     parser.add_argument('--lambda_schedule', default='linear', type=str,
                         choices=['none', 'linear', 'cosine'], help='schedule type for CID loss weights')
     parser.add_argument('--neg_sampling', default='label_aware', type=str,
-                        choices=['shuffle', 'label_aware', 'low_sim'],
+                        choices=['shuffle', 'label_aware', 'low_sim', 'hard_negative'],
                         help='negative sampling strategy for CID ITM loss')
     parser.add_argument('--tau_schedule_mode', default='epoch', type=str,
                         choices=['step', 'epoch'],

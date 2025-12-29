@@ -92,27 +92,6 @@ def align_attention_mask(attn_mask: torch.Tensor, seq_len: int):
     return attn_mask
 
 
-
-class MultimodalEncoder(nn.Module):
-    def __init__(self, config, layer_number):
-        super(MultimodalEncoder, self).__init__()
-        layer = BertLayer(config)
-        self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(layer_number)])
-
-    def forward(self, hidden_states, attention_mask, output_all_encoded_layers=True):
-        all_encoder_layers = []
-        all_encoder_attentions = []
-        for layer_module in self.layer:
-
-            all_encoder_attentions.append(attention)
-
-            if output_all_encoded_layers:
-                all_encoder_layers.append(hidden_states)
-        if not output_all_encoded_layers:
-            all_encoder_layers.append(hidden_states)
-        return all_encoder_layers, all_encoder_attentions
-
-
 class CrossAttention(nn.Module):
     def __init__(self, feature_dim, dropout_prob=0.1):
         super(CrossAttention, self).__init__()
@@ -294,8 +273,7 @@ class CIDModule(nn.Module):
         # Text side mask (only for non-padding positions)
         # Count valid tokens per sample
         valid_counts = valid.sum(dim=1, keepdim=True).clamp_min(1.0)  # [B, 1]        p_t = F.softmax(s_t, dim=-1)  # [B, Lt]
-        # m_t = torch.clamp(self.rho * valid_counts * p_t, 0.0, 1.0)  # [B, Lt]
-        # m_t = m_t.masked_fill(pad_mask, 0.0)  # Zero out padding
+ 
         p_t = F.softmax(s_t, dim=-1)  # [B, Lt]
 
         m_t = torch.clamp(self.rho_t * valid_counts * p_t, 0.0, 1.0)  # [B, Lt]
@@ -320,6 +298,35 @@ class CIDModule(nn.Module):
             idx_neg = torch.zeros(B, dtype=torch.long, device=device)
         elif self.neg_sampling == "shuffle" or labels is None:
             idx_neg = make_neg_index(B, device, labels=None)
+        elif self.neg_sampling == "hard_negative":
+            # Hard Negative Mining: select most similar but different-label samples
+            # This forces the model to learn fine-grained semantic conflicts
+            T_pool = masked_mean(T, pad_mask)  # [B, 768]
+            V_pool = V.mean(dim=1)  # [B, 768]
+            T_norm = F.normalize(T_pool, dim=-1)
+            V_norm = F.normalize(V_pool, dim=-1)
+            # Compute cross-modal similarity matrix
+            sim = torch.matmul(T_norm, V_norm.transpose(0, 1))  # [B, B]
+            # Use symmetric similarity score
+            score = sim + sim.transpose(0, 1)  # [B, B]
+
+            # Mask out invalid candidates:
+            # 1) Self (diagonal)
+            # 2) Same-label samples (if labels provided)
+            mask = torch.eye(B, device=device, dtype=torch.bool)
+            if labels is not None:
+                labels_view = labels.view(-1)
+                same_label = (labels_view.view(B, 1) == labels_view.view(1, B))
+                mask = mask | same_label
+            has_neg = (~mask).any(dim=1)
+
+            # Set masked positions to very low similarity
+            score = score.masked_fill(mask, -1e9)
+            # Select hardest negative (highest similarity among valid candidates)
+            idx_neg = score.argmax(dim=1)  # [B]
+            if (~has_neg).any():
+                idx_fallback = make_neg_index(B, device, labels=labels)
+                idx_neg = torch.where(has_neg, idx_neg, idx_fallback)
         elif self.neg_sampling == "low_sim":
             T_pool = masked_mean(T, pad_mask)  # [B, 768]
             V_pool = V.mean(dim=1)  # [B, 768]
@@ -424,6 +431,7 @@ class DIMMModule(nn.Module):
         self.ln_tconf = nn.LayerNorm(hidden_dim)
         self.ln_vconf = nn.LayerNorm(hidden_dim)
 
+        # MLP for merging two mismatch directions
         self.mis_mlp = nn.Sequential(
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.ReLU(),
@@ -431,21 +439,13 @@ class DIMMModule(nn.Module):
             nn.LayerNorm(hidden_dim)
         )
 
-        # Sequence-level fusion: fuse 4 text channels before pooling
-        self.seq_fusion_mha = nn.MultiheadAttention(
-            embed_dim=hidden_dim,
-            num_heads=num_heads,
-            dropout=dropout,
-            batch_first=True
-        )
-        self.seq_fusion_ln = nn.LayerNorm(hidden_dim)
-
-        # Final fusion MLP (text + vision)
+        # Final fusion MLP (3 text channels + 1 vision channel = 4 * 768 = 3072)
         self.final_mlp = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim * 2),
+            nn.Linear(hidden_dim * 4, hidden_dim * 2),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim * 2, hidden_dim)
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.LayerNorm(hidden_dim)
         )
 
     @staticmethod
@@ -468,7 +468,7 @@ class DIMMModule(nn.Module):
                 pad_mask = torch.cat([pad_mask, extra_padding], dim=1)
 
         # ====================================================================
-        # Text Evidence Channels (keep sequence-level, delay pooling)
+        # Text Evidence Channels (channel-level pooling for better separation)
         # ====================================================================
 
         # Channel 1: Inter-Match (T_con -> V_con)
@@ -479,6 +479,7 @@ class DIMMModule(nn.Module):
             key_padding_mask=None
         )
         T_match = self.ln_match(T_con + T_match)  # [B, Lt, 768]
+        z_match = masked_mean(T_match, pad_mask)  # [B, 768] - Pool immediately
 
         # Channel 2a: Inter-Mismatch (T_con -> V_inc)
         T_mis1, _ = self.mha_mis_tc_vi(
@@ -498,9 +499,11 @@ class DIMMModule(nn.Module):
         )
         T_mis2 = self.ln_mis(T_inc + T_mis2)  # [B, Lt, 768]
 
-        # Merge two mismatch directions at sequence level
-        # Use element-wise average to combine them
-        T_mis = (T_mis1 + T_mis2) / 2.0  # [B, Lt, 768]
+        # Pool each mismatch direction separately, then merge at feature level
+        z_mis1 = masked_mean(T_mis1, pad_mask)  # [B, 768]
+        z_mis2 = masked_mean(T_mis2, pad_mask)  # [B, 768]
+        # Merge two mismatch directions at feature level
+        z_mis = self.mis_mlp(torch.cat([z_mis1, z_mis2], dim=-1))  # [B, 768]
 
         # Channel 3: Intra-Text Conflict (T_con -> T_inc)
         T_conf, _ = self.mha_tconf(
@@ -510,30 +513,15 @@ class DIMMModule(nn.Module):
             key_padding_mask=pad_mask
         )
         T_conf = self.ln_tconf(T_con + T_conf)  # [B, Lt, 768]
+        z_conf = masked_mean(T_conf, pad_mask)  # [B, 768] - Pool immediately
 
         # ====================================================================
-        # Sequence-level Fusion: Concatenate 4 channels and fuse with MHA
+        # Channel-level Fusion: Concatenate pooled features
         # ====================================================================
 
-        # Concatenate 4 text channels along sequence dimension
-        # Shape: [B, 4*Lt, 768]
-        T_all = torch.cat([T_match, T_mis, T_conf, T_con], dim=1)
-
-        # Extend pad_mask for concatenated sequence
-        # Repeat pad_mask 4 times (one for each channel)
-        pad_mask_extended = torch.cat([pad_mask, pad_mask, pad_mask, pad_mask], dim=1)  # [B, 4*Lt]
-
-        # Apply self-attention to fuse across channels
-        T_fused, _ = self.seq_fusion_mha(
-            query=T_all,
-            key=T_all,
-            value=T_all,
-            key_padding_mask=pad_mask_extended
-        )
-        T_fused = self.seq_fusion_ln(T_all + T_fused)  # Residual connection
-
-        # Pool to get text representation
-        z_text = masked_mean(T_fused, pad_mask_extended)  # [B, 768]
+        # Concatenate 3 text channel features at feature dimension
+        # Shape: [B, 768*3]
+        z_text_channels = torch.cat([z_match, z_mis, z_conf], dim=-1)  # [B, 2304]
 
         # ====================================================================
         # Vision Channel 4: Intra-Vision Conflict (V_con -> V_inc)
@@ -561,10 +549,12 @@ class DIMMModule(nn.Module):
         z_vision = self._weighted_pool(V_conf, m_v)  # [B, 768]
 
         # ====================================================================
-        # Final Fusion: Combine text and vision
+        # Final Fusion: Combine text and vision channels
         # ====================================================================
 
-        z_cid = self.final_mlp(torch.cat([z_text, z_vision], dim=-1))  # [B, 768]
+        # Concatenate 3 text channels + 1 vision channel
+        z_all_channels = torch.cat([z_text_channels, z_vision], dim=-1)  # [B, 2304+768=3072]
+        z_cid = self.final_mlp(z_all_channels)  # [B, 768]
         return z_cid
 
 
@@ -591,7 +581,7 @@ class RCLMuFN(nn.Module):
         self.loss_fct = nn.CrossEntropyLoss()
         # Learnable fusion weights (softmax-normalized) for image/text mixes.
         self.res_weight = nn.Parameter(torch.log(torch.tensor([0.6, 0.4], dtype=torch.float)))
-        self.fuse_weight = nn.Parameter(torch.log(torch.tensor([0.7, 0.3], dtype=torch.float)))
+        # self.fuse_weight = nn.Parameter(torch.log(torch.tensor([0.7, 0.3], dtype=torch.float)))
 
         self.d_model = 768
         self.nheads = 8
@@ -601,25 +591,6 @@ class RCLMuFN(nn.Module):
         # ==========================
         self.post_ln = nn.LayerNorm(768)
 
-        self.txt2 = nn.Sequential(nn.Linear(self.d_model*2, self.d_model),
-                                 nn.ReLU(),
-                                 nn.Linear(self.d_model, self.d_model),
-                                 nn.LayerNorm(self.d_model)
-                                 )
-        self.vis2 = nn.Sequential(nn.Linear(self.d_model * 2, self.d_model),
-                                 nn.ReLU(),
-                                  nn.Linear(self.d_model, self.d_model),
-                                 nn.LayerNorm(self.d_model)
-                                 )
-
-        self.attetion_block = nn.Sequential(nn.Linear(self.d_model * 2, self.d_model),
-                                            nn.ReLU(),
-                                            nn.Linear(self.d_model, self.d_model),
-                                            nn.Sigmoid())
-        self.mlp_layer = nn.Sequential(nn.Linear(self.d_model * 2, self.d_model),
-                                       nn.ReLU(),
-                                       nn.Linear(self.d_model, self.d_model),
-                                       nn.LayerNorm(self.d_model))
 
 
         # ========================================================================
@@ -648,13 +619,6 @@ class RCLMuFN(nn.Module):
         # Alignment and connection layers
         self.cid_proj = nn.Linear(768, 768, bias=True)
         self.cid_ln = nn.LayerNorm(768)
-        self.ln_cid = nn.LayerNorm(768)
-        self.ln_fuse = nn.LayerNorm(768)
-        self.res_ln = nn.LayerNorm(768)
-        self.gate_fc = nn.Linear(768 * 2, 768)
-
-        # Alpha parameter for gradual integration (initialized to 0 for reversibility)
-        self.alpha = nn.Parameter(torch.tensor(0.0))
         self.alpha_pre = 0.1
         self.pre_ln_t = nn.LayerNorm(768)
         self.pre_ln_v = nn.LayerNorm(768)
@@ -664,6 +628,14 @@ class RCLMuFN(nn.Module):
         # using _schedule_lambda() based on args.lambda_*_start/end
         self.lambda_ratio = getattr(args, 'lambda_ratio_start', 0.0)
         self.lambda_itm = getattr(args, 'lambda_itm_start', 0.0)
+
+        # ========================================================================
+        # Multi-layer Feature Fusion (LAFF-style)
+        # ========================================================================
+        # Learnable weights for fusing last 4 layers of CLIP features
+        # Initialized to uniform weights (1/4 each)
+        self.layer_weights_text = nn.Parameter(torch.ones(4) / 4)
+        self.layer_weights_vision = nn.Parameter(torch.ones(4) / 4)
 
     def set_epoch(self, epoch):
         """
@@ -677,17 +649,34 @@ class RCLMuFN(nn.Module):
             self.cid.set_epoch(epoch)
 
     def forward(self, inputs, batch, labels):
-        output = self.model(**inputs,output_attentions=False)
+        # ========================================================================
+        # CLIP Forward with Multi-layer Feature Extraction
+        # ========================================================================
+        output = self.model(**inputs, output_attentions=False, output_hidden_states=True)
 
-        # 提取对应的特征
-        text_features = output['text_model_output']['last_hidden_state']  # 128，77，512
-        image_features = output['vision_model_output']['last_hidden_state']  # 128，50，768
-        text_feature = output['text_model_output']['pooler_output'] # 64，512
-        image_feature = output['vision_model_output']['pooler_output'] # 64，768
+        # Extract multi-layer features (last 4 layers)
+        text_hidden_states = output['text_model_output']['hidden_states']  # Tuple of [B, Lt, 512]
+        vision_hidden_states = output['vision_model_output']['hidden_states']  # Tuple of [B, Lv, 768]
+
+        # Fuse last 4 layers with learnable weights (LAFF-style)
+        text_layers = text_hidden_states[-4:]  # Last 4 layers
+        vision_layers = vision_hidden_states[-4:]  # Last 4 layers
+
+        # Normalize weights to sum to 1 (convex combination)
+        weights_t = F.softmax(self.layer_weights_text, dim=0)
+        weights_v = F.softmax(self.layer_weights_vision, dim=0)
+
+        # Weighted sum of layers
+        text_features = sum(w * layer for w, layer in zip(weights_t, text_layers))  # [B, Lt, 512]
+        image_features = sum(w * layer for w, layer in zip(weights_v, vision_layers))  # [B, Lv, 768]
+
+        # Also extract pooled outputs for classification head
+        text_feature = output['text_model_output']['pooler_output']  # [B, 512]
+        image_feature = output['vision_model_output']['pooler_output']  # [B, 768]
         text_feature = self.text_linear(text_feature)  # 64，768
         image_feature = self.image_linear(image_feature)  # 64,768
 
-        text_list, image_list, label_list, id_list = batch
+        # text_list, image_list, label_list, id_list = batch
 
         attn_mask = inputs.get("attention_mask", None)
         if attn_mask is None:
@@ -753,19 +742,6 @@ class RCLMuFN(nn.Module):
         cid_hat = self.cid_ln(z_cid + self.cid_proj(z_cid))  # LN(z_cid + W*z_cid)
         # ========================================================================
 
-        image_t = image_feature
-        text_im = text_feature
-
-        txt_output = text_feature
-        image_output = image_feature
-
-        txt_out = self.cross_att(txt_output, image_output, image_output)  # 32,768
-        image_out = self.cross_att(image_output, txt_output, txt_output)  # 32,768
-        # res_bert = 0.6 * image_out + 0.4 * txt_out  # 32,768
-        res_alpha = torch.softmax(self.res_weight, dim=0)
-        res_bert = res_alpha[0] * image_out + res_alpha[1] * txt_out  # 32,768
-        # res_bert = image_t + text_im
-
         # ========================================================================
         # CID-DIMM Connection: Align and integrate with residual connection
         # ========================================================================
@@ -790,113 +766,3 @@ class RCLMuFN(nn.Module):
             # ====================================================================
             outputs = (loss,) + outputs
         return outputs
-
-class TransformerEncoderLayer(nn.Module):
-
-    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1,
-                 activation="relu", normalize_before=False):
-        super().__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.dropout = nn.Dropout(dropout)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
-
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
-
-        self.activation = _get_activation_fn(activation)
-        self.normalize_before = normalize_before
-
-    def with_pos_embed(self, tensor, pos: Optional[Tensor]):
-        return tensor if pos is None else tensor + pos
-
-    def forward_post(self,
-                     src,
-                     src_mask: Optional[Tensor] = None,
-                     src_key_padding_mask: Optional[Tensor] = None,
-                     pos: Optional[Tensor] = None):
-        q = k = self.with_pos_embed(src, pos)
-        src2 = self.self_attn(q, k, value=src, attn_mask=src_mask,
-                              key_padding_mask=src_key_padding_mask)[0]
-        src = src + self.dropout1(src2)
-        src = self.norm1(src)
-        src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
-        src = src + self.dropout2(src2)
-        src = self.norm2(src)
-        return src
-
-    def forward_pre(self, src,
-                    src_mask: Optional[Tensor] = None,
-                    src_key_padding_mask: Optional[Tensor] = None,
-                    pos: Optional[Tensor] = None):
-        src2 = self.norm1(src)
-        q = k = self.with_pos_embed(src2, pos)
-        src2 = self.self_attn(q, k, value=src2, attn_mask=src_mask,
-                              key_padding_mask=src_key_padding_mask)[0]
-        src = src + self.dropout1(src2)
-        src2 = self.norm2(src)
-        src2 = self.linear2(self.dropout(self.activation(self.linear1(src2))))
-        src = src + self.dropout2(src2)
-        return src
-
-    def forward(self, src,
-                src_mask: Optional[Tensor] = None,
-                src_key_padding_mask: Optional[Tensor] = None,
-                pos: Optional[Tensor] = None):
-        if self.normalize_before:
-            return self.forward_pre(src, src_mask, src_key_padding_mask, pos)
-        return self.forward_post(src, src_mask, src_key_padding_mask, pos)
-
-
-class TransformerCrossLayer(nn.Module):
-    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1,
-                 activation="relu", normalize_before=False,return_attn=False,kdim=None,vdim=None):
-        super().__init__()
-        self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout,kdim=kdim,vdim=vdim,batch_first=True)
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
-
-        self.norm2 = nn.LayerNorm(d_model)
-        self.norm3 = nn.LayerNorm(d_model)
-        self.dropout = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
-        self.dropout3 = nn.Dropout(dropout)
-
-        self.activation = _get_activation_fn(activation)
-        self.normalize_before = normalize_before
-        self.return_attn = return_attn
-
-    def with_pos_embed(self, tensor, pos: Optional[Tensor]):
-        return tensor if pos is None else tensor + pos
-
-    def forward(self, tgt, memory,
-                     tgt_mask: Optional[Tensor] = None,
-                     memory_mask: Optional[Tensor] = None,
-                     tgt_key_padding_mask: Optional[Tensor] = None,
-                     memory_key_padding_mask: Optional[Tensor] = None,
-                     pos: Optional[Tensor] = None,
-                     query_pos: Optional[Tensor] = None):
-
-        tgt2, cross_attn = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
-                                   key=self.with_pos_embed(memory, pos),
-                                   value=memory, attn_mask=memory_mask,
-                                   key_padding_mask=memory_key_padding_mask)
-        tgt = tgt + self.dropout2(tgt2)
-        tgt = self.norm2(tgt)
-        tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
-        tgt = tgt + self.dropout3(tgt2)
-        tgt = self.norm3(tgt)
-
-        return tgt
-
-
-def _get_activation_fn(activation):
-    if activation == "relu":
-        return F.relu
-    if activation == "gelu":
-        return F.gelu
-    if activation == "glu":
-        return F.glu
-    raise RuntimeError(F"activation should be relu/gelu, not {activation}.")

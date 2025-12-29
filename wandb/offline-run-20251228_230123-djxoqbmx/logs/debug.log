@@ -20,3 +20,5 @@ config: {'device': '1', 'model': 'RCLMuFN', 'text_name': 'text_final', 'simple_l
 2025-12-28 23:01:23,822 INFO    MainThread:1308372 [wandb_run.py:_redirect():2461] Redirects installed.
 2025-12-28 23:01:23,824 INFO    MainThread:1308372 [wandb_init.py:init():1081] run started, returning control to user process
 2025-12-28 23:01:25,479 INFO    MainThread:1308372 [wandb_watch.py:_watch():68] Watching
+2025-12-28 23:15:47,172 INFO    wandb-AsyncioManager-main:1308372 [service_client.py:_forward_responses():80] Reached EOF.
+2025-12-28 23:15:47,172 INFO    wandb-AsyncioManager-main:1308372 [mailbox.py:close():137] Closing mailbox, abandoning 0 handles.
