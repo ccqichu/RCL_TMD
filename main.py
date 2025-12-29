@@ -39,7 +39,7 @@ def set_args():
     parser.add_argument('--dropout_rate', default=0.1, type=float, help='dropout rate')
     parser.add_argument('--output_dir', default='../output_dir/', type=str, help='the output path')
     parser.add_argument('--limit', default=None, type=int, help='the limited number of training examples')
-    parser.add_argument('--seed', type=int, default=42, help='random seed')
+    parser.add_argument('--seed', type=int, default=2025, help='random seed')
     parser.add_argument('--lambda_ratio_start', default=0.0, type=float, help='start weight for CID ratio loss')
     parser.add_argument('--lambda_ratio_end', default=2e-3, type=float, help='end weight for CID ratio loss')
     parser.add_argument('--lambda_itm_start', default=0.0, type=float, help='start weight for CID ITM loss')
