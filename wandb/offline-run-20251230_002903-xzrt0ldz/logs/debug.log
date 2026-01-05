@@ -1,0 +1,30 @@
+2025-12-30 00:29:03,321 INFO    MainThread:423174 [wandb_setup.py:_flush():80] Current SDK version is 0.23.1
+2025-12-30 00:29:03,321 INFO    MainThread:423174 [wandb_setup.py:_flush():80] Configure stats pid to 423174
+2025-12-30 00:29:03,321 INFO    MainThread:423174 [wandb_setup.py:_flush():80] Loading settings from /home/user/.config/wandb/settings
+2025-12-30 00:29:03,321 INFO    MainThread:423174 [wandb_setup.py:_flush():80] Loading settings from /home/user/chengtaiyu/RCLMuFN-main_copy/src/wandb/settings
+2025-12-30 00:29:03,321 INFO    MainThread:423174 [wandb_setup.py:_flush():80] Loading settings from environment variables
+2025-12-30 00:29:03,321 INFO    MainThread:423174 [wandb_init.py:setup_run_log_directory():714] Logging user logs to /home/user/chengtaiyu/RCLMuFN-main_copy/src/wandb/offline-run-20251230_002903-xzrt0ldz/logs/debug.log
+2025-12-30 00:29:03,321 INFO    MainThread:423174 [wandb_init.py:setup_run_log_directory():715] Logging internal logs to /home/user/chengtaiyu/RCLMuFN-main_copy/src/wandb/offline-run-20251230_002903-xzrt0ldz/logs/debug-internal.log
+2025-12-30 00:29:03,321 INFO    MainThread:423174 [wandb_init.py:init():841] calling init triggers
+2025-12-30 00:29:03,321 INFO    MainThread:423174 [wandb_init.py:init():846] wandb.init called with sweep_config: {}
+config: {'device': '1', 'model': 'RCLMuFN', 'text_name': 'text_final', 'simple_linear': False, 'num_train_epochs': 10, 'train_batch_size': 32, 'dev_batch_size': 32, 'label_number': 2, 'text_size': 512, 'image_size': 768, 'adam_epsilon': 1e-08, 'optimizer_name': 'adam', 'learning_rate': 0.0003, 'clip_learning_rate': 1e-06, 'max_len': 77, 'layers': 3, 'max_grad_norm': 3.0, 'weight_decay': 0.03, 'warmup_proportion': 0.2, 'dropout_rate': 0.1, 'output_dir': '../output_dir/', 'limit': None, 'seed': 42, 'lambda_ratio_start': 0.0, 'lambda_ratio_end': 0.002, 'lambda_itm_start': 0.0, 'lambda_itm_end': 0.0015, 'lambda_warmup_epochs': 2, 'lambda_ramp_epochs': 3, 'lambda_schedule': 'linear', 'neg_sampling': 'label_aware', 'tau_schedule_mode': 'epoch', 'resume_from': None, 'freeze_clip': False, '_wandb': {}}
+2025-12-30 00:29:03,321 INFO    MainThread:423174 [wandb_init.py:init():889] starting backend
+2025-12-30 00:29:03,469 WARNING MainThread:423174 [wandb_init.py:init():1586] [no run ID] interrupted
+Traceback (most recent call last):
+  File "/home/user/.miniforge3/envs/TMD/lib/python3.9/site-packages/wandb/sdk/wandb_init.py", line 1577, in init
+    run = wi.init(run_settings, run_config, run_printer)
+  File "/home/user/.miniforge3/envs/TMD/lib/python3.9/site-packages/wandb/sdk/wandb_init.py", line 891, in init
+    service = self._wl.ensure_service()
+  File "/home/user/.miniforge3/envs/TMD/lib/python3.9/site-packages/wandb/sdk/wandb_setup.py", line 402, in ensure_service
+    self._connection = service_connection.connect_to_service(
+  File "/home/user/.miniforge3/envs/TMD/lib/python3.9/site-packages/wandb/sdk/lib/service/service_connection.py", line 43, in connect_to_service
+    return _start_and_connect_service(asyncer, settings)
+  File "/home/user/.miniforge3/envs/TMD/lib/python3.9/site-packages/wandb/sdk/lib/service/service_connection.py", line 56, in _start_and_connect_service
+    proc = service_process.start(settings)
+  File "/home/user/.miniforge3/envs/TMD/lib/python3.9/site-packages/wandb/sdk/lib/service/service_process.py", line 33, in start
+    return _launch_server(settings)
+  File "/home/user/.miniforge3/envs/TMD/lib/python3.9/site-packages/wandb/sdk/lib/service/service_process.py", line 105, in _launch_server
+    token = service_port_file.poll_for_token(
+  File "/home/user/.miniforge3/envs/TMD/lib/python3.9/site-packages/wandb/sdk/lib/service/service_port_file.py", line 61, in poll_for_token
+    _SLEEP(max(0, min(0.2, end_time - _MONOTONIC())))
+KeyboardInterrupt

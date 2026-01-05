@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 from model import RCLMuFN
 from train import train
 from data_set import MyDataset
@@ -16,7 +16,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def set_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--device', default='1', type=str, help='device number')
+    parser.add_argument('--device', default='3', type=str, help='device number')
     parser.add_argument('--model', default='RCLMuFN', type=str, help='the model name', choices=['RCLMuFN'])
     parser.add_argument('--text_name', default='text_final', type=str, help='the text data folder name')
     parser.add_argument('--simple_linear', default=False, type=bool, help='linear implementation choice')
@@ -39,7 +39,7 @@ def set_args():
     parser.add_argument('--dropout_rate', default=0.1, type=float, help='dropout rate')
     parser.add_argument('--output_dir', default='../output_dir/', type=str, help='the output path')
     parser.add_argument('--limit', default=None, type=int, help='the limited number of training examples')
-    parser.add_argument('--seed', type=int, default=2025, help='random seed')
+    parser.add_argument('--seed', type=int, default=42, help='random seed')
     parser.add_argument('--lambda_ratio_start', default=0.0, type=float, help='start weight for CID ratio loss')
     parser.add_argument('--lambda_ratio_end', default=2e-3, type=float, help='end weight for CID ratio loss')
     parser.add_argument('--lambda_itm_start', default=0.0, type=float, help='start weight for CID ITM loss')
@@ -60,6 +60,37 @@ def set_args():
                         help='path to checkpoint to resume from (for stage 2 training)')
     parser.add_argument('--freeze_clip', action='store_true',
                         help='freeze CLIP model parameters (for stage 1 training)')
+    # Counterfactual (CF) + prediction consistency
+    parser.add_argument('--use_cf', action='store_true',
+                        help='enable counterfactual intervention on border/layout cues (representation-level)')
+    parser.add_argument('--cf_prob', default=1.0, type=float,
+                        help='probability to apply CF per batch (0~1)')
+    parser.add_argument('--cf_border_width', default=1, type=int,
+                        help='border ring width on ViT patch grid (e.g., 1 for outer ring)')
+    parser.add_argument('--cf_replace', default='mean_con', type=str,
+                        choices=['zero', 'mean_con', 'noise'],
+                        help='how to replace border-inconsistent tokens in CF')
+
+    parser.add_argument('--pc_loss', default='kl', type=str, choices=['kl', 'mse'],
+                        help='prediction consistency loss type')
+    parser.add_argument('--pc_tau', default=1.0, type=float,
+                        help='temperature for KL consistency')
+    parser.add_argument('--no_pc_detach_teacher', action='store_false',
+                        dest='pc_detach_teacher', default=True,
+                        help='disable stop-gradient on teacher/original branch for KL')
+
+    # weight scheduling for prediction consistency
+    parser.add_argument('--lambda_pc_start', default=0.0, type=float,
+                        help='start weight for prediction consistency regularizer')
+    parser.add_argument('--lambda_pc_end', default=1e-3, type=float,
+                        help='end weight for prediction consistency regularizer')
+    parser.add_argument('--lambda_pc_warmup_epochs', default=2, type=int,
+                        help='epochs to keep lambda_pc at start value')
+    parser.add_argument('--lambda_pc_ramp_epochs', default=3, type=int,
+                        help='epochs to ramp lambda_pc from start to end')
+    parser.add_argument('--lambda_pc_schedule', default='linear', type=str,
+                        choices=['none', 'linear', 'cosine'],
+                        help='schedule type for lambda_pc')
 
 
     # * Backbone (disabled)

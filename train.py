@@ -128,9 +128,17 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
             args.lambda_ramp_epochs,
             args.lambda_schedule
         )
+        model.lambda_pc = _schedule_lambda(
+            args.lambda_pc_start,
+            args.lambda_pc_end,
+            i_epoch,
+            args.lambda_pc_warmup_epochs,
+            args.lambda_pc_ramp_epochs,
+            args.lambda_pc_schedule
+        )
 
         # Log scheduled parameters
-        log_dict = {"lambda_ratio": model.lambda_ratio, "lambda_itm": model.lambda_itm}
+        log_dict = {"lambda_ratio": model.lambda_ratio, "lambda_itm": model.lambda_itm, "lambda_pc": model.lambda_pc}
         if hasattr(model, 'cid') and hasattr(model.cid, 'current_tau'):
             log_dict["tau"] = model.cid.current_tau.item()
         wandb.log(log_dict)
@@ -155,6 +163,10 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
             iter_bar.set_description("Iter (loss=%5.3f)" % loss.item())
             if hasattr(model, "last_cid_stats") and step % diag_interval == 0:
                 wandb.log(model.last_cid_stats)
+
+            if hasattr(model, "last_cf_stats") and step % diag_interval == 0:
+                wandb.log(model.last_cf_stats)
+                
             loss.backward()
             optimizer.step()
             if args.optimizer_name == 'adam':
@@ -166,6 +178,29 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
         wandb.log({'dev_acc': dev_acc, 'dev_f1': dev_f1, 'dev_precision': dev_precision, 'dev_recall': dev_recall})
         logging.info("i_epoch is {}, dev_acc is {}, dev_f1 is {}, dev_precision is {}, dev_recall is {}".format(i_epoch, dev_acc, dev_f1, dev_precision, dev_recall))
 
+        if dev_acc > 0.83:
+            test_acc, test_f1, test_precision, test_recall = evaluate_acc_f1(
+                args, model, device, test_data, processor, macro=True, mode='test'
+            )
+            _, test_f1_, test_precision_, test_recall_ = evaluate_acc_f1(
+                args, model, device, test_data, processor, mode='test'
+            )
+            wandb.log({
+                'test_acc': test_acc,
+                'macro_test_f1': test_f1,
+                'macro_test_precision': test_precision,
+                'macro_test_recall': test_recall,
+                'micro_test_f1': test_f1_,
+                'micro_test_precision': test_precision_,
+                'micro_test_recall': test_recall_,
+            })
+            logging.info(
+                "i_epoch is {}, test_acc is {}, macro_test_f1 is {}, macro_test_precision is {}, "
+                "macro_test_recall is {}, micro_test_f1 is {}, micro_test_precision is {}, micro_test_recall is {}".format(
+                    i_epoch, test_acc, test_f1, test_precision, test_recall, test_f1_, test_precision_, test_recall_
+                )
+            )
+
         if dev_acc > max_acc:
             max_acc = dev_acc
 
@@ -174,13 +209,6 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
                 os.mkdir(path_to_save)
             model_to_save = (model.module if hasattr(model, "module") else model)
             torch.save(model_to_save.state_dict(), os.path.join(path_to_save, 'model.pt'))
-
-            test_acc, test_f1,test_precision,test_recall = evaluate_acc_f1(args, model, device, test_data, processor,macro = True, mode='test')
-            _, test_f1_,test_precision_,test_recall_ = evaluate_acc_f1(args, model, device, test_data, processor, mode='test')
-            wandb.log({'test_acc': test_acc, 'macro_test_f1': test_f1,
-                     'macro_test_precision': test_precision,'macro_test_recall': test_recall, 'micro_test_f1': test_f1_,
-                     'micro_test_precision': test_precision_,'micro_test_recall': test_recall_})
-            logging.info("i_epoch is {}, test_acc is {}, macro_test_f1 is {}, macro_test_precision is {}, macro_test_recall is {}, micro_test_f1 is {}, micro_test_precision is {}, micro_test_recall is {}".format(i_epoch, test_acc, test_f1, test_precision, test_recall, test_f1_, test_precision_, test_recall_))
 
         torch.cuda.empty_cache()
     logger.info('Train done')

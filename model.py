@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch
 import torch.nn.functional as F
 import copy
+from counterfactual import apply_border_counterfactual, prediction_consistency_loss
 
 
 # from backbone import build_backbone
@@ -664,6 +665,23 @@ class RCLMuFN(nn.Module):
         # using _schedule_lambda() based on args.lambda_*_start/end
         self.lambda_ratio = getattr(args, 'lambda_ratio_start', 0.0)
         self.lambda_itm = getattr(args, 'lambda_itm_start', 0.0)
+        # ==========================
+        # Counterfactual (CF) configs
+        # ==========================
+        self.use_cf = getattr(args, "use_cf", False)
+        self.cf_prob = float(getattr(args, "cf_prob", 1.0))
+        self.cf_border_width = int(getattr(args, "cf_border_width", 1))
+        self.cf_replace = getattr(args, "cf_replace", "mean_con")
+
+        self.pc_loss = getattr(args, "pc_loss", "kl")
+        self.pc_tau = float(getattr(args, "pc_tau", 1.0))
+        # default True (recommended) unless user explicitly disables
+        self.pc_detach_teacher = bool(getattr(args, "pc_detach_teacher", True))
+
+        # scheduled in train.py each epoch (like lambda_ratio/lambda_itm)
+        self.lambda_pc = getattr(args, "lambda_pc_start", 0.0)
+
+        self.last_cf_stats = {}
 
     def set_epoch(self, epoch):
         """
@@ -779,17 +797,59 @@ class RCLMuFN(nn.Module):
         logits_fuse = self.classifier_fuse(z_final)  # [B, num_labels]
         score = nn.functional.softmax(logits_fuse, dim=-1)
 
-        outputs = (score,) # (64,2)
+        outputs = (score,)
         if labels is not None:
             loss_fuse = self.loss_fct(logits_fuse, labels)
-            # ====================================================================
-            # CID-DIMM Loss Integration
-            # ====================================================================
-            # Combine classification loss with CID consistency losses
+
+            # 原有：分类 + CID 两个辅助损失
             loss = loss_fuse + self.lambda_ratio * loss_ratio + self.lambda_itm * loss_itm
-            # ====================================================================
+
+            # ==========================
+            # CF + prediction consistency
+            # ==========================
+            pc_applied = 0.0
+            pc_loss_val = None
+            cf_strength_mean = 0.0
+
+            if self.use_cf and self.training and (self.lambda_pc is not None) and (self.lambda_pc > 0):
+                # batch-level probability
+                if torch.rand(1, device=logits_fuse.device).item() < self.cf_prob:
+                    # 仅干预“border & inconsistent”的 V 分支
+                    V_inc_cf, cf_strength = apply_border_counterfactual(
+                        v_ref=V_ref,
+                        m_v=m_v,
+                        border_width=self.cf_border_width,
+                        replace_mode=self.cf_replace
+                    )
+                    cf_strength_mean = cf_strength.mean().detach().item()
+
+                    # 用同一套 T_con/T_inc/V_con + V_inc_cf 走 DIMM -> logits_cf
+                    z_cid_cf = self.dimm(T_con, T_inc, V_con, V_inc_cf, pad_mask, m_v=m_v)
+                    cid_hat_cf = self.cid_ln(z_cid_cf + self.cid_proj(z_cid_cf))
+                    z_final_cf = self.post_ln(cid_hat_cf)
+                    logits_cf = self.classifier_fuse(z_final_cf)
+
+                    pc_loss_val = prediction_consistency_loss(
+                        logits=logits_fuse,
+                        logits_cf=logits_cf,
+                        kind=self.pc_loss,
+                        tau=self.pc_tau,
+                        detach_teacher=self.pc_detach_teacher
+                    )
+                    loss = loss + self.lambda_pc * pc_loss_val
+                    pc_applied = 1.0
+
+            # 给 train.py 的 wandb 用
+            self.last_cf_stats = {
+                "pc_applied": pc_applied,
+                "pc_loss": (pc_loss_val.detach().item() if pc_loss_val is not None else 0.0),
+                "cf_strength": cf_strength_mean,
+                "lambda_pc": float(self.lambda_pc) if self.lambda_pc is not None else 0.0
+            }
+
             outputs = (loss,) + outputs
         return outputs
+
 
 class TransformerEncoderLayer(nn.Module):
 
