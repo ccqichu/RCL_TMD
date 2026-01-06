@@ -1,0 +1,12 @@
+{"time":"2026-01-05T14:14:15.015472569+08:00","level":"INFO","msg":"stream: starting","core version":"0.23.1"}
+{"time":"2026-01-05T14:14:15.138438417+08:00","level":"WARN","msg":"featurechecker: GraphQL client is nil, skipping feature loading"}
+{"time":"2026-01-05T14:14:15.138511639+08:00","level":"INFO","msg":"stream: created new stream","id":"erbmis2d"}
+{"time":"2026-01-05T14:14:15.13855656+08:00","level":"INFO","msg":"handler: started","stream_id":"erbmis2d"}
+{"time":"2026-01-05T14:14:15.138642769+08:00","level":"INFO","msg":"stream: started","id":"erbmis2d"}
+{"time":"2026-01-05T14:14:15.138658613+08:00","level":"INFO","msg":"writer: started","stream_id":"erbmis2d"}
+{"time":"2026-01-05T14:14:15.138681246+08:00","level":"INFO","msg":"sender: started","stream_id":"erbmis2d"}
+{"time":"2026-01-05T14:14:15.149140732+08:00","level":"WARN","msg":"runupserter: server does not expand metric globs but the x_server_side_expand_glob_metrics setting is set; ignoring"}
+{"time":"2026-01-05T15:29:48.996929348+08:00","level":"INFO","msg":"stream: closing","id":"erbmis2d"}
+{"time":"2026-01-05T15:29:48.997428554+08:00","level":"INFO","msg":"handler: closed","stream_id":"erbmis2d"}
+{"time":"2026-01-05T15:29:48.997564405+08:00","level":"INFO","msg":"sender: closed","stream_id":"erbmis2d"}
+{"time":"2026-01-05T15:29:48.997599303+08:00","level":"INFO","msg":"stream: closed","id":"erbmis2d"}

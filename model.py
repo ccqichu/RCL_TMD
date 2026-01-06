@@ -9,6 +9,7 @@ import torch
 import torch.nn.functional as F
 import copy
 from counterfactual import apply_border_counterfactual, prediction_consistency_loss
+from interclip_dimm_adapter import ConditionalConcatAdapter
 
 
 # from backbone import build_backbone
@@ -378,9 +379,18 @@ class DIMMModule(nn.Module):
     """
 
     def __init__(self, hidden_dim=768, num_heads=8, dropout=0.1,
-                 vision_conf_threshold=0.1):
+                 vision_conf_threshold=0.1,
+                 use_adapter=False,
+                 adapter_on="match,mis,tconf,vconf",
+                 adapter_dropout=0.1,
+                 adapter_ff_mult=4,
+                 adapter_init_beta=0.0):
         super(DIMMModule, self).__init__()
         self.vision_conf_threshold = vision_conf_threshold
+
+        # Adapter configuration
+        self.use_adapter = use_adapter
+        self.adapter_on_set = set([s.strip() for s in adapter_on.split(",") if s.strip()])
 
         # Inter-Match
         self.mha_match = nn.MultiheadAttention(
@@ -449,6 +459,25 @@ class DIMMModule(nn.Module):
             nn.Linear(hidden_dim * 2, hidden_dim)
         )
 
+        # Instantiate adapters if enabled
+        if self.use_adapter:
+            adrop = adapter_dropout
+            self.adapt_match_t = ConditionalConcatAdapter(
+                hidden_dim, num_heads, adrop, adapter_ff_mult, adapter_init_beta
+            )
+            self.adapt_mis_t1 = ConditionalConcatAdapter(
+                hidden_dim, num_heads, adrop, adapter_ff_mult, adapter_init_beta
+            )
+            self.adapt_mis_t2 = ConditionalConcatAdapter(
+                hidden_dim, num_heads, adrop, adapter_ff_mult, adapter_init_beta
+            )
+            self.adapt_tconf = ConditionalConcatAdapter(
+                hidden_dim, num_heads, adrop, adapter_ff_mult, adapter_init_beta
+            )
+            self.adapt_vconf = ConditionalConcatAdapter(
+                hidden_dim, num_heads, adrop, adapter_ff_mult, adapter_init_beta
+            )
+
     @staticmethod
     def _weighted_pool(x: torch.Tensor, weights: torch.Tensor):
         weights = weights.clamp_min(0.0)
@@ -473,44 +502,60 @@ class DIMMModule(nn.Module):
         # ====================================================================
 
         # Channel 1: Inter-Match (T_con -> V_con)
+        T_con_q = T_con
+        if self.use_adapter and ("match" in self.adapter_on_set):
+            T_con_q = self.adapt_match_t(T_con, V_con, x_pad_mask=pad_mask, cond_pad_mask=None)
+
         T_match, _ = self.mha_match(
-            query=T_con,
+            query=T_con_q,
             key=V_con,
             value=V_con,
             key_padding_mask=None
         )
-        T_match = self.ln_match(T_con + T_match)  # [B, Lt, 768]
+        T_match = self.ln_match(T_con_q + T_match)  # [B, Lt, 768]
 
         # Channel 2a: Inter-Mismatch (T_con -> V_inc)
+        T_con_m1 = T_con
+        if self.use_adapter and ("mis" in self.adapter_on_set):
+            T_con_m1 = self.adapt_mis_t1(T_con, V_inc, x_pad_mask=pad_mask, cond_pad_mask=None)
+
         T_mis1, _ = self.mha_mis_tc_vi(
-            query=T_con,
+            query=T_con_m1,
             key=V_inc,
             value=V_inc,
             key_padding_mask=None
         )
-        T_mis1 = self.ln_mis(T_con + T_mis1)  # [B, Lt, 768]
+        T_mis1 = self.ln_mis(T_con_m1 + T_mis1)  # [B, Lt, 768]
 
         # Channel 2b: Inter-Mismatch (T_inc -> V_con)
+        T_inc_m2 = T_inc
+        if self.use_adapter and ("mis" in self.adapter_on_set):
+            T_inc_m2 = self.adapt_mis_t2(T_inc, V_con, x_pad_mask=pad_mask, cond_pad_mask=None)
+
         T_mis2, _ = self.mha_mis_ti_vc(
-            query=T_inc,
+            query=T_inc_m2,
             key=V_con,
             value=V_con,
             key_padding_mask=None
         )
-        T_mis2 = self.ln_mis(T_inc + T_mis2)  # [B, Lt, 768]
+        T_mis2 = self.ln_mis(T_inc_m2 + T_mis2)  # [B, Lt, 768]
 
         # Merge two mismatch directions at sequence level
         # Use element-wise average to combine them
         T_mis = (T_mis1 + T_mis2) / 2.0  # [B, Lt, 768]
 
         # Channel 3: Intra-Text Conflict (T_con -> T_inc)
+        T_con_tc = T_con
+        if self.use_adapter and ("tconf" in self.adapter_on_set):
+            T_con_tc = self.adapt_tconf(T_con, T_inc, x_pad_mask=pad_mask, cond_pad_mask=pad_mask)
+
         T_conf, _ = self.mha_tconf(
-            query=T_con,
+            query=T_con_tc,
             key=T_inc,
             value=T_inc,
             key_padding_mask=pad_mask
         )
-        T_conf = self.ln_tconf(T_con + T_conf)  # [B, Lt, 768]
+        T_conf = self.ln_tconf(T_con_tc + T_conf)  # [B, Lt, 768]
 
         # ====================================================================
         # Sequence-level Fusion: Concatenate 4 channels and fuse with MHA
@@ -552,13 +597,20 @@ class DIMMModule(nn.Module):
                                    dtype=m_v.dtype, device=m_v.device)
                 m_v = torch.cat([m_v, extra], dim=1)
         v_mask = (m_v < self.vision_conf_threshold)
+
+        # Channel 4: Intra-Vision Conflict (V_con -> V_inc) with adapter
+        V_con_vc = V_con
+        if self.use_adapter and ("vconf" in self.adapter_on_set):
+            # x_pad_mask=None => all False (vision has no padding)
+            V_con_vc = self.adapt_vconf(V_con, V_inc, x_pad_mask=None, cond_pad_mask=v_mask)
+
         V_conf, _ = self.mha_vconf(
-            query=V_con,
+            query=V_con_vc,
             key=V_inc,
             value=V_inc,
             key_padding_mask=v_mask
         )
-        V_conf = self.ln_vconf(V_con + V_conf)
+        V_conf = self.ln_vconf(V_con_vc + V_conf)
         z_vision = self._weighted_pool(V_conf, m_v)  # [B, 768]
 
         # ====================================================================
@@ -640,10 +692,22 @@ class RCLMuFN(nn.Module):
             neg_sampling=args.neg_sampling,
             tau_schedule_mode=getattr(args, 'tau_schedule_mode', 'step')  # 'step' or 'epoch'
         )
+        # Read adapter configuration from args (with backward compatibility)
+        use_adapter = getattr(args, "use_dimm_adapter", False)
+        adapter_on = getattr(args, "dimm_adapter_on", "match,mis,tconf,vconf")
+        adapter_ff_mult = getattr(args, "dimm_adapter_ff_mult", 4)
+        adapter_init_beta = getattr(args, "dimm_adapter_init_beta", 0.0)
+        adapter_dropout = getattr(args, "dimm_adapter_dropout", 0.1)
+
         self.dimm = DIMMModule(
             hidden_dim=768,
             num_heads=8,
-            dropout=0.1
+            dropout=0.1,
+            use_adapter=use_adapter,
+            adapter_on=adapter_on,
+            adapter_ff_mult=adapter_ff_mult,
+            adapter_init_beta=adapter_init_beta,
+            adapter_dropout=adapter_dropout
         )
 
         # Alignment and connection layers

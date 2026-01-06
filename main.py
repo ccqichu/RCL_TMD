@@ -92,6 +92,17 @@ def set_args():
                         choices=['none', 'linear', 'cosine'],
                         help='schedule type for lambda_pc')
 
+    # InterCLIP-style DIMM adapter parameters
+    parser.add_argument('--use_dimm_adapter', action='store_true',
+                        help='enable Scheme-A channel-wise InterCLIP adapters inside DIMM')
+    parser.add_argument('--dimm_adapter_on', type=str, default='match,mis,tconf,vconf',
+                        help='comma-separated channels: match,mis,tconf,vconf')
+    parser.add_argument('--dimm_adapter_ff_mult', type=int, default=4,
+                        help='FFN expansion ratio in adapter (default 4)')
+    parser.add_argument('--dimm_adapter_init_beta', type=float, default=0.0,
+                        help='init beta for gated residual (must be 0 for stability)')
+    parser.add_argument('--dimm_adapter_dropout', type=float, default=0.1,
+                        help='dropout used in adapter layers')
 
     # * Backbone (disabled)
     # parser.add_argument('--lr_backbone', default=1e-5, type=float)
@@ -154,8 +165,13 @@ def main():
         if os.path.exists(args.resume_from):
             print(f"Loading checkpoint from {args.resume_from}")
             checkpoint = torch.load(args.resume_from, map_location='cpu')
-            model.load_state_dict(checkpoint)
+            # Use strict=False to allow loading old checkpoints when adding new modules (e.g., adapters)
+            missing_keys, unexpected_keys = model.load_state_dict(checkpoint, strict=False)
             print(f"✅ Successfully resumed from {args.resume_from}")
+            if missing_keys:
+                print(f"⚠️  Missing keys (expected if loading old checkpoint with new modules): {missing_keys}")
+            if unexpected_keys:
+                print(f"⚠️  Unexpected keys: {unexpected_keys}")
         else:
             raise FileNotFoundError(f"Checkpoint not found: {args.resume_from}")
 
