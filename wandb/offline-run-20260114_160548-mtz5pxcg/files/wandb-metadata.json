@@ -1,0 +1,24 @@
+{
+    "os": "Linux-6.8.0-40-generic-x86_64-with-debian-bullseye-sid",
+    "python": "3.7.4",
+    "heartbeatAt": "2026-01-14T08:05:48.486912",
+    "startedAt": "2026-01-14T08:05:48.412380",
+    "docker": null,
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "gpu_count": 4,
+    "cpu_count": 48,
+    "cuda": null,
+    "args": [],
+    "state": "running",
+    "program": "main.py",
+    "codePath": "main.py",
+    "git": {
+        "remote": "https://github.com/ccqichu/RCL_TMD",
+        "commit": "5634a73e0c0dc19f020b0873796395f60c7776a8"
+    },
+    "email": "ccqichu@gmail.com",
+    "root": "/home/user/2024_cty/RCL_TMD",
+    "host": "docker",
+    "username": "user",
+    "executable": "/home/user/.conda/envs/MMSD2.0/bin/python"
+}

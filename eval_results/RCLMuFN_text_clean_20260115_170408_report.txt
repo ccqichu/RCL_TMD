@@ -1,0 +1,67 @@
+======================================================================
+  RCL_TMD MODEL EVALUATION REPORT
+======================================================================
+
+Checkpoint: ../output_dir/exp_aggressive/RCLMuFN/model.pt
+Dataset: text_clean
+Evaluation Time: 20260115_170408
+Device: cuda:0
+
+
+======================================================================
+  TEST SET (2373 samples)
+======================================================================
+
+Overall Accuracy: 0.8390
+
+Micro Average:
+  Precision: 0.8390
+  Recall:    0.8390
+  F1-Score:  0.8390
+
+Macro Average:
+  Precision: 0.8318
+  Recall:    0.8460
+  F1-Score:  0.8351
+
+Per-Class Metrics:
+----------------------------------------------------------------------
+Class              Precision       Recall     F1-Score      Support
+----------------------------------------------------------------------
+Non-Hate              0.9125       0.8142       0.8606         1448
+Hate                  0.7512       0.8778       0.8096          925
+
+Confusion Matrix:
+                Predicted
+              Non-Hate  Hate
+Actual Non-Hate    1179     269
+       Hate         113     812
+
+======================================================================
+  VALID SET (2387 samples)
+======================================================================
+
+Overall Accuracy: 0.8387
+
+Micro Average:
+  Precision: 0.8387
+  Recall:    0.8387
+  F1-Score:  0.8387
+
+Macro Average:
+  Precision: 0.8310
+  Recall:    0.8431
+  F1-Score:  0.8344
+
+Per-Class Metrics:
+----------------------------------------------------------------------
+Class              Precision       Recall     F1-Score      Support
+----------------------------------------------------------------------
+Non-Hate              0.9031       0.8228       0.8611         1450
+Hate                  0.7589       0.8634       0.8078          937
+
+Confusion Matrix:
+                Predicted
+              Non-Hate  Hate
+Actual Non-Hate    1193     257
+       Hate         128     809

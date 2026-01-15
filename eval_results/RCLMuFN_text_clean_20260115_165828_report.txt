@@ -1,0 +1,67 @@
+======================================================================
+  RCL_TMD MODEL EVALUATION REPORT
+======================================================================
+
+Checkpoint: ../output_dir/text_clean_aggressive/RCLMuFN/model.pt
+Dataset: text_clean
+Evaluation Time: 20260115_165828
+Device: cuda:0
+
+
+======================================================================
+  TEST SET (2373 samples)
+======================================================================
+
+Overall Accuracy: 0.8508
+
+Micro Average:
+  Precision: 0.8508
+  Recall:    0.8508
+  F1-Score:  0.8508
+
+Macro Average:
+  Precision: 0.8458
+  Recall:    0.8381
+  F1-Score:  0.8415
+
+Per-Class Metrics:
+----------------------------------------------------------------------
+Class              Precision       Recall     F1-Score      Support
+----------------------------------------------------------------------
+Non-Hate              0.8647       0.8957       0.8799         1448
+Hate                  0.8270       0.7805       0.8031          925
+
+Confusion Matrix:
+                Predicted
+              Non-Hate  Hate
+Actual Non-Hate    1297     151
+       Hate         203     722
+
+======================================================================
+  VALID SET (2387 samples)
+======================================================================
+
+Overall Accuracy: 0.8504
+
+Micro Average:
+  Precision: 0.8504
+  Recall:    0.8504
+  F1-Score:  0.8504
+
+Macro Average:
+  Precision: 0.8468
+  Recall:    0.8369
+  F1-Score:  0.8411
+
+Per-Class Metrics:
+----------------------------------------------------------------------
+Class              Precision       Recall     F1-Score      Support
+----------------------------------------------------------------------
+Non-Hate              0.8603       0.9000       0.8797         1450
+Hate                  0.8333       0.7737       0.8024          937
+
+Confusion Matrix:
+                Predicted
+              Non-Hate  Hate
+Actual Non-Hate    1305     145
+       Hate         212     725

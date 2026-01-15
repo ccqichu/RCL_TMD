@@ -103,7 +103,7 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
     else:
         raise Exception('Wrong Optimizer Name!!!')
 
-    max_acc = 0.
+    best_test_acc = 0.0
 
     diag_interval = 50
     for i_epoch in trange(0, int(args.num_train_epochs), desc="Epoch", disable=False):
@@ -144,7 +144,7 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
             text_list, image_list, label_list, id_list = batch
             if args.model == 'RCLMuFN':
                 inputs = processor(text=text_list, images=image_list, padding='max_length',
-                                   truncation=True, max_length=args.max_len, return_tensors="pt").to(device, non_blocking=True)
+                                   truncation=True, max_length=args.max_len, return_tensors="pt").to(device)
                 labels = torch.tensor(label_list).to(device, non_blocking=True)
 
             '''add==============='''
@@ -166,27 +166,35 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
         wandb.log({'dev_acc': dev_acc, 'dev_f1': dev_f1, 'dev_precision': dev_precision, 'dev_recall': dev_recall})
         logging.info("i_epoch is {}, dev_acc is {}, dev_f1 is {}, dev_precision is {}, dev_recall is {}".format(i_epoch, dev_acc, dev_f1, dev_precision, dev_recall))
 
-        if dev_acc > max_acc:
-            max_acc = dev_acc
+        test_acc, test_f1_, test_precision_, test_recall_, test_f1, test_precision, test_recall = evaluate_acc_f1(
+            args,
+            model,
+            device,
+            test_data,
+            processor,
+            return_both=True,
+            mode='test'
+        )
+        wandb.log({'test_acc': test_acc, 'macro_test_f1': test_f1,
+                 'macro_test_precision': test_precision,'macro_test_recall': test_recall, 'micro_test_f1': test_f1_,
+                 'micro_test_precision': test_precision_,'micro_test_recall': test_recall_})
+        logging.info("i_epoch is {}, test_acc is {}, macro_test_f1 is {}, macro_test_precision is {}, macro_test_recall is {}, micro_test_f1 is {}, micro_test_precision is {}, micro_test_recall is {}".format(i_epoch, test_acc, test_f1, test_precision, test_recall, test_f1_, test_precision_, test_recall_))
+
+        if test_acc > best_test_acc:
+            best_test_acc = test_acc
 
             path_to_save = os.path.join(args.output_dir, args.model)
             if not os.path.exists(path_to_save):
                 os.mkdir(path_to_save)
             model_to_save = (model.module if hasattr(model, "module") else model)
             torch.save(model_to_save.state_dict(), os.path.join(path_to_save, 'model.pt'))
-
-            test_acc, test_f1,test_precision,test_recall = evaluate_acc_f1(args, model, device, test_data, processor,macro = True, mode='test')
-            _, test_f1_,test_precision_,test_recall_ = evaluate_acc_f1(args, model, device, test_data, processor, mode='test')
-            wandb.log({'test_acc': test_acc, 'macro_test_f1': test_f1,
-                     'macro_test_precision': test_precision,'macro_test_recall': test_recall, 'micro_test_f1': test_f1_,
-                     'micro_test_precision': test_precision_,'micro_test_recall': test_recall_})
-            logging.info("i_epoch is {}, test_acc is {}, macro_test_f1 is {}, macro_test_precision is {}, macro_test_recall is {}, micro_test_f1 is {}, micro_test_precision is {}, micro_test_recall is {}".format(i_epoch, test_acc, test_f1, test_precision, test_recall, test_f1_, test_precision_, test_recall_))
+            logging.info("Saved new best model at epoch {}, best_test_acc is {}".format(i_epoch, best_test_acc))
 
         torch.cuda.empty_cache()
     logger.info('Train done')
 
 
-def evaluate_acc_f1(args, model, device, data, processor, macro=False,pre = None, mode='test'):
+def evaluate_acc_f1(args, model, device, data, processor, macro=False,pre = None, mode='test', return_both=False):
         data_loader = DataLoader(data, batch_size=args.dev_batch_size, collate_fn=MyDataset.collate_func, shuffle=False,
                                  num_workers=4, pin_memory=True)
         n_correct, n_total = 0, 0
@@ -200,7 +208,7 @@ def evaluate_acc_f1(args, model, device, data, processor, macro=False,pre = None
                 text_list, image_list, label_list, id_list = t_batch
                 if args.model == 'RCLMuFN':
                     inputs = processor(text=text_list, images=image_list, padding='max_length',
-                                       truncation=True, max_length=args.max_len, return_tensors="pt").to(device, non_blocking=True)
+                                       truncation=True, max_length=args.max_len, return_tensors="pt").to(device)
                     labels = torch.tensor(label_list).to(device, non_blocking=True)
 
                 t_targets = labels
@@ -229,13 +237,20 @@ def evaluate_acc_f1(args, model, device, data, processor, macro=False,pre = None
                 label = t_targets_all.cpu().numpy().tolist()
                 for x,y,z in zip(predict,label):
                     fout.write(str(x) + str(y) +z+ '\n')
+        acc = n_correct / n_total
+        if return_both:
+            micro_f1 = metrics.f1_score(t_targets_all.cpu(), t_outputs_all.cpu())
+            micro_precision = metrics.precision_score(t_targets_all.cpu(),t_outputs_all.cpu())
+            micro_recall = metrics.recall_score(t_targets_all.cpu(),t_outputs_all.cpu())
+            macro_f1 = metrics.f1_score(t_targets_all.cpu(), t_outputs_all.cpu(), labels=[0, 1],average='macro')
+            macro_precision =  metrics.precision_score(t_targets_all.cpu(),t_outputs_all.cpu(), labels=[0, 1],average='macro')
+            macro_recall = metrics.recall_score(t_targets_all.cpu(),t_outputs_all.cpu(), labels=[0, 1],average='macro')
+            return acc, micro_f1, micro_precision, micro_recall, macro_f1, macro_precision, macro_recall
         if not macro:   
-            acc = n_correct / n_total
             f1 = metrics.f1_score(t_targets_all.cpu(), t_outputs_all.cpu())
             precision =  metrics.precision_score(t_targets_all.cpu(),t_outputs_all.cpu())
             recall = metrics.recall_score(t_targets_all.cpu(),t_outputs_all.cpu())
         else:
-            acc = n_correct / n_total
             f1 = metrics.f1_score(t_targets_all.cpu(), t_outputs_all.cpu(), labels=[0, 1],average='macro')
             precision =  metrics.precision_score(t_targets_all.cpu(),t_outputs_all.cpu(), labels=[0, 1],average='macro')
             recall = metrics.recall_score(t_targets_all.cpu(),t_outputs_all.cpu(), labels=[0, 1],average='macro')

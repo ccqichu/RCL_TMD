@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 from model import RCLMuFN
 from train import train
 from data_set import MyDataset
@@ -16,9 +16,9 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def set_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--device', default='1', type=str, help='device number')
+    parser.add_argument('--device', default='3', type=str, help='device number')
     parser.add_argument('--model', default='RCLMuFN', type=str, help='the model name', choices=['RCLMuFN'])
-    parser.add_argument('--text_name', default='text_final', type=str, help='the text data folder name')
+    parser.add_argument('--text_name', default='text_clean', type=str, help='the text data folder name')
     parser.add_argument('--simple_linear', default=False, type=bool, help='linear implementation choice')
     parser.add_argument('--num_train_epochs', default=10, type=int, help='number of train epoched')
     parser.add_argument('--train_batch_size', default=32, type=int, help='batch size in train phase')
@@ -39,7 +39,7 @@ def set_args():
     parser.add_argument('--dropout_rate', default=0.1, type=float, help='dropout rate')
     parser.add_argument('--output_dir', default='../output_dir/', type=str, help='the output path')
     parser.add_argument('--limit', default=None, type=int, help='the limited number of training examples')
-    parser.add_argument('--seed', type=int, default=42, help='random seed')
+    parser.add_argument('--seed', type=int, default=7, help='random seed')
     parser.add_argument('--lambda_ratio_start', default=0.0, type=float, help='start weight for CID ratio loss')
     parser.add_argument('--lambda_ratio_end', default=2e-3, type=float, help='end weight for CID ratio loss')
     parser.add_argument('--lambda_itm_start', default=0.0, type=float, help='start weight for CID ITM loss')
@@ -113,7 +113,7 @@ def main():
 
     if args.model == 'RCLMuFN':
 
-        processor = CLIPProcessor.from_pretrained("/home/user/chengtaiyu/models/clip-vit-base-patch32")
+        processor = CLIPProcessor.from_pretrained("/home/user/2024_cty/RCL/src/models/clip-vit-base-patch32")
         model = RCLMuFN(args)
     else:
         raise RuntimeError('Error model name!')

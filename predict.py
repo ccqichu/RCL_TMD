@@ -30,7 +30,7 @@ def predict(args, model, device, data, processor, pre = None):
                 text_list, image_list, label_list, id_list = t_batch
                 image.extend(id_list)
                 text.extend(text_list)
-                inputs = processor(text=text_list, images=image_list, padding='max_length', truncation=True, max_length=args.max_len, return_tensors="pt").to(device, non_blocking=True)
+                inputs = processor(text=text_list, images=image_list, padding='max_length', truncation=True, max_length=args.max_len, return_tensors="pt").to(device)
                 labels = torch.tensor(label_list).to(device, non_blocking=True)
 
                 t_targets = labels
@@ -102,7 +102,7 @@ def main():
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device
     device = torch.device("cuda" if torch.cuda.is_available() and int(args.device) >= 0 else "cpu")
 
-    processor = CLIPProcessor.from_pretrained("./MMSD2.0-main/openai/clip-vit-base-patch32")
+    processor = CLIPProcessor.from_pretrained("/home/user/2024_cty/RCL/src/models/clip-vit-base-patch32")
     model = RCLMuFN(args)
     test_data = MyDataset(mode='test', text_name=args.text_name, limit=None)
 

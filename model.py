@@ -571,7 +571,7 @@ class DIMMModule(nn.Module):
 class RCLMuFN(nn.Module):
     def __init__(self, args):
         super(RCLMuFN, self).__init__()
-        self.model = CLIPModel.from_pretrained("/home/user/chengtaiyu/models/clip-vit-base-patch32")
+        self.model = CLIPModel.from_pretrained("/home/user/2024_cty/RCL/src/models/clip-vit-base-patch32")
         if args.simple_linear:
             self.text_linear =  nn.Linear(args.text_size, args.image_size)
             self.image_linear =  nn.Linear(args.image_size, args.image_size)
@@ -630,8 +630,8 @@ class RCLMuFN(nn.Module):
             text_dim=512,
             vision_dim=768,
             hidden_dim=768,
-            rho=0.3,
-            rho_t=0.5,
+            rho=0.4,        # 增加vision一致性目标: 0.3 → 0.4
+            rho_t=0.55,     # 针对text_clean调整: 0.6 → 0.55 (文本更长更复杂,允许更多不一致性)
             delta=0.1,
             tau0=1.0,
             tau_min=0.4,

@@ -1,0 +1,67 @@
+======================================================================
+  RCL_TMD MODEL EVALUATION REPORT
+======================================================================
+
+Checkpoint: ../output_dir/text_clean_conservative/RCLMuFN/model.pt
+Dataset: text_clean
+Evaluation Time: 20260115_170023
+Device: cuda:0
+
+
+======================================================================
+  TEST SET (2373 samples)
+======================================================================
+
+Overall Accuracy: 0.8491
+
+Micro Average:
+  Precision: 0.8491
+  Recall:    0.8491
+  F1-Score:  0.8491
+
+Macro Average:
+  Precision: 0.8439
+  Recall:    0.8366
+  F1-Score:  0.8398
+
+Per-Class Metrics:
+----------------------------------------------------------------------
+Class              Precision       Recall     F1-Score      Support
+----------------------------------------------------------------------
+Non-Hate              0.8638       0.8936       0.8785         1448
+Hate                  0.8240       0.7795       0.8011          925
+
+Confusion Matrix:
+                Predicted
+              Non-Hate  Hate
+Actual Non-Hate    1294     154
+       Hate         204     721
+
+======================================================================
+  VALID SET (2387 samples)
+======================================================================
+
+Overall Accuracy: 0.8437
+
+Micro Average:
+  Precision: 0.8437
+  Recall:    0.8437
+  F1-Score:  0.8437
+
+Macro Average:
+  Precision: 0.8398
+  Recall:    0.8295
+  F1-Score:  0.8338
+
+Per-Class Metrics:
+----------------------------------------------------------------------
+Class              Precision       Recall     F1-Score      Support
+----------------------------------------------------------------------
+Non-Hate              0.8540       0.8959       0.8745         1450
+Hate                  0.8256       0.7631       0.7931          937
+
+Confusion Matrix:
+                Predicted
+              Non-Hate  Hate
+Actual Non-Hate    1299     151
+       Hate         222     715
