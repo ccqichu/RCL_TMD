@@ -1,0 +1,13 @@
+{
+  "seed": 42,
+  "best_test": {
+    "best_epoch": 6,
+    "best_test_acc": 0.8744205646860514,
+    "macro_test_f1": 0.8689931528166823,
+    "macro_test_precision": 0.8666255740697126,
+    "macro_test_recall": 0.8719139166791101,
+    "micro_test_f1": 0.8423280423280424,
+    "micro_test_precision": 0.8248704663212435,
+    "micro_test_recall": 0.8605405405405405
+  }
+}

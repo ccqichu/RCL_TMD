@@ -1,0 +1,131 @@
+{
+  "model_path_default": "/home/user/chengtaiyu/RCLMuFN-main_copy/output_dir/854_pt/model.pt",
+  "ablation_results": {
+    "no_cid_loss": {
+      "description": "Remove CID auxiliary loss (requires a checkpoint trained with loss weights = 0)",
+      "model_path": "/home/user/chengtaiyu/RCLMuFN-main_copy/output_dir/854_pt/model.pt",
+      "metrics": {
+        "accuracy": 0.8551266085512661,
+        "precision": 0.8214953271028037,
+        "recall": 0.8476374156219865,
+        "f1": 0.8343616516373992,
+        "precision_macro": 0.8517484103773914,
+        "recall_macro": 0.8542122938168242,
+        "f1_macro": 0.8528134337124658,
+        "total": 2409
+      }
+    },
+    "no_dimm": {
+      "description": "Remove DIMM (keep CID decomposition)",
+      "model_path": "/home/user/chengtaiyu/RCLMuFN-main_copy/output_dir/854_pt/model.pt",
+      "metrics": {
+        "accuracy": 0.46284765462847655,
+        "precision": 0.4200373366521469,
+        "recall": 0.6509161041465766,
+        "f1": 0.510590015128593,
+        "precision_macro": 0.4843328827899138,
+        "recall_macro": 0.4858079063006936,
+        "f1_macro": 0.4576869118881236,
+        "total": 2409
+      }
+    },
+    "no_cid_keep_dimm": {
+      "description": "Remove CID but keep DIMM (use pseudo decomposition)",
+      "model_path": "/home/user/chengtaiyu/RCLMuFN-main_copy/output_dir/854_pt/model.pt",
+      "metrics": {
+        "accuracy": 0.5695309256953093,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "precision_macro": 0.28476546284765464,
+        "recall_macro": 0.5,
+        "f1_macro": 0.36286696641100236,
+        "total": 2409
+      }
+    },
+    "no_pre_crossatt": {
+      "description": "Remove pre-CID cross-attention",
+      "model_path": "/home/user/chengtaiyu/RCLMuFN-main_copy/output_dir/854_pt/model.pt",
+      "metrics": {
+        "accuracy": 0.8181818181818182,
+        "precision": 0.7871524448705657,
+        "recall": 0.7917068466730954,
+        "f1": 0.7894230769230769,
+        "precision_macro": 0.8145132648950193,
+        "recall_macro": 0.8149496332490842,
+        "f1_macro": 0.8147261476653369,
+        "total": 2409
+      }
+    },
+    "no_cid_no_dimm": {
+      "description": "Remove CID + DIMM",
+      "model_path": "/home/user/chengtaiyu/RCLMuFN-main_copy/output_dir/854_pt/model.pt",
+      "metrics": {
+        "accuracy": 0.4383561643835616,
+        "precision": 0.36587436332767403,
+        "recall": 0.4156219864995178,
+        "f1": 0.3891647855530474,
+        "precision_macro": 0.43679583316668025,
+        "recall_macro": 0.43558067255005045,
+        "f1_macro": 0.4346899609670731,
+        "total": 2409
+      }
+    },
+    "w_o_match": {
+      "description": "Channel ablation: w/o match",
+      "model_path": "/home/user/chengtaiyu/RCLMuFN-main_copy/output_dir/854_pt/model.pt",
+      "metrics": {
+        "accuracy": 0.8430884184308842,
+        "precision": 0.7689795918367347,
+        "recall": 0.9083895853423336,
+        "f1": 0.8328912466843501,
+        "precision_macro": 0.8443715526751241,
+        "recall_macro": 0.8510606818839948,
+        "f1_macro": 0.842501961370344,
+        "total": 2409
+      }
+    },
+    "w_o_mismatch": {
+      "description": "Channel ablation: w/o mismatch",
+      "model_path": "/home/user/chengtaiyu/RCLMuFN-main_copy/output_dir/854_pt/model.pt",
+      "metrics": {
+        "accuracy": 0.8447488584474886,
+        "precision": 0.7774058577405858,
+        "recall": 0.8958534233365477,
+        "f1": 0.8324372759856631,
+        "precision_macro": 0.8442218745045598,
+        "recall_macro": 0.8509879361580698,
+        "f1_macro": 0.8439061863300319,
+        "total": 2409
+      }
+    },
+    "w_o_conflict": {
+      "description": "Channel ablation: w/o conflict",
+      "model_path": "/home/user/chengtaiyu/RCLMuFN-main_copy/output_dir/854_pt/model.pt",
+      "metrics": {
+        "accuracy": 0.8156911581569116,
+        "precision": 0.8219326818675353,
+        "recall": 0.7299903567984571,
+        "f1": 0.7732379979570991,
+        "precision_macro": 0.8168803194283913,
+        "recall_macro": 0.805228414550832,
+        "f1_macro": 0.8089966213561719,
+        "total": 2409
+      }
+    },
+    "cid_random_mask": {
+      "description": "CID-random mask with matched mask counts",
+      "model_path": "/home/user/chengtaiyu/RCLMuFN-main_copy/output_dir/854_pt/model.pt",
+      "metrics": {
+        "accuracy": 0.8061436280614362,
+        "precision": 0.7872983870967742,
+        "recall": 0.7531340405014465,
+        "f1": 0.7698373583045836,
+        "precision_macro": 0.8033175068864252,
+        "recall_macro": 0.7996719765189448,
+        "f1_macro": 0.8011969150791473,
+        "total": 2409
+      }
+    }
+  }
+}

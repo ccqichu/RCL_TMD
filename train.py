@@ -27,9 +27,31 @@ def _schedule_lambda(start, end, epoch_idx, warmup_epochs, ramp_epochs, schedule
     return start + (end - start) * t
 
 
+def _collect_ablation_config(args):
+    return {
+        "exp_name": getattr(args, "exp_name", None),
+        "disable_cid": getattr(args, "disable_cid", False),
+        "disable_dimm": getattr(args, "disable_dimm", False),
+        "disable_pre_crossatt": getattr(args, "disable_pre_crossatt", False),
+        "disable_cid_dimm": getattr(args, "disable_cid_dimm", False),
+        "dimm_drop_channel": getattr(args, "dimm_drop_channel", "none"),
+        "cid_random_mask": getattr(args, "cid_random_mask", False),
+        "cid_random_mask_seed": getattr(args, "cid_random_mask_seed", None),
+        "disable_cid_loss": getattr(args, "disable_cid_loss", False),
+    }
+
+
 def train(args, model,device, train_data, dev_data, test_data, processor):
     if not os.path.exists(args.output_dir):
-        os.mkdir(args.output_dir)
+        os.makedirs(args.output_dir, exist_ok=True)
+
+    ablation_cfg = _collect_ablation_config(args)
+    logger.info(f"Experiment: {ablation_cfg.get('exp_name')}")
+    logger.info(f"Ablation config: {ablation_cfg}")
+    try:
+        wandb.log({"ablation_config": ablation_cfg})
+    except Exception:
+        pass
 
     train_loader = DataLoader(dataset=train_data,
                               batch_size=args.train_batch_size,
@@ -104,6 +126,17 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
         raise Exception('Wrong Optimizer Name!!!')
 
     max_acc = 0.
+    best_test_acc = -1.0
+    best_test_metrics = {
+        "best_epoch": None,
+        "best_test_acc": None,
+        "macro_test_f1": None,
+        "macro_test_precision": None,
+        "macro_test_recall": None,
+        "micro_test_f1": None,
+        "micro_test_precision": None,
+        "micro_test_recall": None,
+    }
 
     diag_interval = 50
     for i_epoch in trange(0, int(args.num_train_epochs), desc="Epoch", disable=False):
@@ -166,6 +199,13 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
         wandb.log({'dev_acc': dev_acc, 'dev_f1': dev_f1, 'dev_precision': dev_precision, 'dev_recall': dev_recall})
         logging.info("i_epoch is {}, dev_acc is {}, dev_f1 is {}, dev_precision is {}, dev_recall is {}".format(i_epoch, dev_acc, dev_f1, dev_precision, dev_recall))
 
+        test_acc, test_f1,test_precision,test_recall = evaluate_acc_f1(args, model, device, test_data, processor,macro = True, mode='test')
+        _, test_f1_,test_precision_,test_recall_ = evaluate_acc_f1(args, model, device, test_data, processor, mode='test')
+        wandb.log({'test_acc': test_acc, 'macro_test_f1': test_f1,
+                 'macro_test_precision': test_precision,'macro_test_recall': test_recall, 'micro_test_f1': test_f1_,
+                 'micro_test_precision': test_precision_,'micro_test_recall': test_recall_})
+        logging.info("i_epoch is {}, test_acc is {}, macro_test_f1 is {}, macro_test_precision is {}, macro_test_recall is {}, micro_test_f1 is {}, micro_test_precision is {}, micro_test_recall is {}".format(i_epoch, test_acc, test_f1, test_precision, test_recall, test_f1_, test_precision_, test_recall_))
+
         if dev_acc > max_acc:
             max_acc = dev_acc
 
@@ -175,15 +215,28 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
             model_to_save = (model.module if hasattr(model, "module") else model)
             torch.save(model_to_save.state_dict(), os.path.join(path_to_save, 'model.pt'))
 
-            test_acc, test_f1,test_precision,test_recall = evaluate_acc_f1(args, model, device, test_data, processor,macro = True, mode='test')
-            _, test_f1_,test_precision_,test_recall_ = evaluate_acc_f1(args, model, device, test_data, processor, mode='test')
-            wandb.log({'test_acc': test_acc, 'macro_test_f1': test_f1,
-                     'macro_test_precision': test_precision,'macro_test_recall': test_recall, 'micro_test_f1': test_f1_,
-                     'micro_test_precision': test_precision_,'micro_test_recall': test_recall_})
-            logging.info("i_epoch is {}, test_acc is {}, macro_test_f1 is {}, macro_test_precision is {}, macro_test_recall is {}, micro_test_f1 is {}, micro_test_precision is {}, micro_test_recall is {}".format(i_epoch, test_acc, test_f1, test_precision, test_recall, test_f1_, test_precision_, test_recall_))
+        if test_acc > best_test_acc:
+            best_test_acc = test_acc
+            best_path = os.path.join(args.output_dir, "best_pt")
+            if not os.path.exists(best_path):
+                os.mkdir(best_path)
+            model_to_save = (model.module if hasattr(model, "module") else model)
+            torch.save(model_to_save.state_dict(), os.path.join(best_path, 'model.pt'))
+            logging.info("i_epoch is {}, new best test_acc is {}, model saved to {}".format(i_epoch, best_test_acc, best_path))
+            best_test_metrics = {
+                "best_epoch": i_epoch,
+                "best_test_acc": test_acc,
+                "macro_test_f1": test_f1,
+                "macro_test_precision": test_precision,
+                "macro_test_recall": test_recall,
+                "micro_test_f1": test_f1_,
+                "micro_test_precision": test_precision_,
+                "micro_test_recall": test_recall_,
+            }
 
         torch.cuda.empty_cache()
     logger.info('Train done')
+    return best_test_metrics
 
 
 def evaluate_acc_f1(args, model, device, data, processor, macro=False,pre = None, mode='test'):

@@ -92,6 +92,35 @@ def align_attention_mask(attn_mask: torch.Tensor, seq_len: int):
     return attn_mask
 
 
+def _random_mask_from_counts(valid_mask: torch.Tensor, counts: torch.Tensor, generator: torch.Generator):
+    bsz, seq_len = valid_mask.shape
+    mask = torch.zeros_like(valid_mask, dtype=torch.float)
+    for i in range(bsz):
+        valid_idx = torch.nonzero(valid_mask[i], as_tuple=False).squeeze(1)
+        if valid_idx.numel() == 0:
+            continue
+        k = int(counts[i].item())
+        if k <= 0:
+            continue
+        k = min(k, valid_idx.numel())
+        perm = torch.randperm(valid_idx.numel(), device=valid_mask.device, generator=generator)
+        chosen = valid_idx[perm[:k]]
+        mask[i, chosen] = 1.0
+    return mask
+
+
+def _apply_cid_random_mask(T_ref, V_ref, m_t, m_v, valid_mask, generator: torch.Generator):
+    m_t_counts = torch.round(m_t.sum(dim=1)).long()
+    m_v_counts = torch.round(m_v.sum(dim=1)).long()
+    m_t_rand = _random_mask_from_counts(valid_mask.bool(), m_t_counts, generator)
+    v_valid = torch.ones_like(m_v, dtype=torch.bool)
+    m_v_rand = _random_mask_from_counts(v_valid, m_v_counts, generator)
+
+    T_con = m_t_rand.unsqueeze(-1) * T_ref
+    T_inc = (1.0 - m_t_rand).unsqueeze(-1) * T_ref
+    V_con = m_v_rand.unsqueeze(-1) * V_ref
+    V_inc = (1.0 - m_v_rand).unsqueeze(-1) * V_ref
+    return T_con, T_inc, V_con, V_inc, m_t_rand, m_v_rand
 
 class MultimodalEncoder(nn.Module):
     def __init__(self, config, layer_number):
@@ -454,7 +483,7 @@ class DIMMModule(nn.Module):
         denom = weights.sum(dim=1, keepdim=True).clamp_min(1e-6)
         return (x * weights.unsqueeze(-1)).sum(dim=1) / denom
 
-    def forward(self, T_con, T_inc, V_con, V_inc, pad_mask, m_v=None):
+    def forward(self, T_con, T_inc, V_con, V_inc, pad_mask, m_v=None, drop_channel=None):
         # Ensure pad_mask matches sequence length
         if pad_mask.size(1) != T_con.size(1):
             if pad_mask.size(1) > T_con.size(1):
@@ -510,6 +539,13 @@ class DIMMModule(nn.Module):
             key_padding_mask=pad_mask
         )
         T_conf = self.ln_tconf(T_con + T_conf)  # [B, Lt, 768]
+
+        if drop_channel == "match":
+            T_match = torch.zeros_like(T_match)
+        elif drop_channel == "mismatch":
+            T_mis = torch.zeros_like(T_mis)
+        elif drop_channel == "conflict":
+            T_conf = torch.zeros_like(T_conf)
 
         # ====================================================================
         # Sequence-level Fusion: Concatenate 4 channels and fuse with MHA
@@ -634,14 +670,14 @@ class RCLMuFN(nn.Module):
             rho_t=0.5,
             delta=0.1,
             tau0=1.0,
-            tau_min=0.4,
-            decay=0.9995,
+            tau_min=getattr(args, 'tau_min', 0.4),
+            decay=getattr(args, 'tau_decay', 0.9995),
             neg_sampling=args.neg_sampling,
             tau_schedule_mode=getattr(args, 'tau_schedule_mode', 'step')  # 'step' or 'epoch'
         )
         self.dimm = DIMMModule(
             hidden_dim=768,
-            num_heads=8,
+            num_heads=getattr(args, 'num_heads', 8),
             dropout=0.1
         )
 
@@ -665,6 +701,16 @@ class RCLMuFN(nn.Module):
         self.lambda_ratio = getattr(args, 'lambda_ratio_start', 0.0)
         self.lambda_itm = getattr(args, 'lambda_itm_start', 0.0)
 
+        # Ablation flags
+        self.disable_cid = getattr(args, 'disable_cid', False)
+        self.disable_dimm = getattr(args, 'disable_dimm', False)
+        self.disable_pre_crossatt = getattr(args, 'disable_pre_crossatt', False)
+        self.disable_cid_dimm = getattr(args, 'disable_cid_dimm', False)
+        self.dimm_drop_channel = getattr(args, 'dimm_drop_channel', 'none')
+        self.cid_random_mask = getattr(args, 'cid_random_mask', False)
+        self.cid_random_mask_seed = getattr(args, 'cid_random_mask_seed', 42)
+        self.disable_cid_loss = getattr(args, 'disable_cid_loss', False)
+
     def set_epoch(self, epoch):
         """
         Set current epoch for temperature scheduling in CID module.
@@ -676,7 +722,7 @@ class RCLMuFN(nn.Module):
         if hasattr(self, 'cid'):
             self.cid.set_epoch(epoch)
 
-    def forward(self, inputs, batch, labels):
+    def forward(self, inputs, batch, labels, zero_text=False, no_text_branch=False, zero_image=False):
         output = self.model(**inputs,output_attentions=False)
 
         # 提取对应的特征
@@ -688,6 +734,13 @@ class RCLMuFN(nn.Module):
         image_feature = self.image_linear(image_feature)  # 64,768
 
         text_list, image_list, label_list, id_list = batch
+
+        if zero_text:
+            text_features = torch.zeros_like(text_features)
+            text_feature = torch.zeros_like(text_feature)
+        if zero_image:
+            image_features = torch.zeros_like(image_features)
+            image_feature = torch.zeros_like(image_feature)
 
         attn_mask = inputs.get("attention_mask", None)
         if attn_mask is None:
@@ -703,6 +756,8 @@ class RCLMuFN(nn.Module):
                 )
         else:
             attn_mask = attn_mask.to(text_features.device)
+        if no_text_branch:
+            attn_mask = torch.zeros_like(attn_mask)
         attn_mask = align_attention_mask(attn_mask, text_features.size(1))
         pad_mask = (attn_mask == 0)
 
@@ -710,70 +765,93 @@ class RCLMuFN(nn.Module):
         # CID-DIMM Pipeline: Token-level cross attention before CID (Scheme A)
         # ========================================================================
         T_proj = self.cid.text_proj(text_features)
-        pre_alpha = self.alpha_pre
+        if self.disable_pre_crossatt:
+            T_ref = self.pre_ln_t(T_proj)
+            V_ref = self.pre_ln_v(image_features)
+        else:
+            pre_alpha = self.alpha_pre
+            # Text cross-attend to vision (no key_padding_mask needed for vision)
+            T_attn = self.cross_att(T_proj, image_features, image_features)
+            # Mask out padding positions in query (text) side after attention
+            T_attn = T_attn.masked_fill(pad_mask.unsqueeze(-1), 0.0)
+            T_ref = T_proj + pre_alpha * T_attn
 
-        # Text cross-attend to vision (no key_padding_mask needed for vision)
-        T_attn = self.cross_att(T_proj, image_features, image_features)
-        # Mask out padding positions in query (text) side after attention
-        T_attn = T_attn.masked_fill(pad_mask.unsqueeze(-1), 0.0)
-        T_ref = T_proj + pre_alpha * T_attn
+            # Vision cross-attend to text (with key_padding_mask for text)
+            V_ref = image_features + pre_alpha * self.cross_att(
+                image_features, T_proj, T_proj, key_padding_mask=pad_mask
+            )
 
-        # Vision cross-attend to text (with key_padding_mask for text)
-        V_ref = image_features + pre_alpha * self.cross_att(
-            image_features, T_proj, T_proj, key_padding_mask=pad_mask
-        )
+            T_ref = self.pre_ln_t(T_ref)
+            V_ref = self.pre_ln_v(V_ref)
 
-        T_ref = self.pre_ln_t(T_ref)
-        V_ref = self.pre_ln_v(V_ref)
+        if self.disable_cid_dimm:
+            loss_ratio = torch.zeros((), device=image_features.device)
+            loss_itm = torch.zeros((), device=image_features.device)
+        elif self.disable_cid:
+            valid = (~pad_mask).float()
+            m_t = valid
+            m_v = torch.ones(
+                image_features.size(0),
+                image_features.size(1),
+                dtype=image_features.dtype,
+                device=image_features.device
+            )
+            T_con, T_inc = T_ref, torch.zeros_like(T_ref)
+            V_con, V_inc = V_ref, torch.zeros_like(V_ref)
+            loss_ratio = torch.zeros((), device=image_features.device)
+            loss_itm = torch.zeros((), device=image_features.device)
+        else:
+            # Run CID module (bilateral decomposition)
+            T_con, T_inc, V_con, V_inc, m_t, m_v, loss_ratio, loss_itm = self.cid(
+                T_ref,
+                V_ref,
+                attn_mask,
+                labels=labels
+            )
+            if self.cid_random_mask:
+                seed_offset = int(self.cid.global_step.item()) if hasattr(self.cid, 'global_step') else 0
+                generator = torch.Generator(device=image_features.device)
+                generator.manual_seed(int(self.cid_random_mask_seed) + seed_offset)
+                T_con, T_inc, V_con, V_inc, m_t, m_v = _apply_cid_random_mask(
+                    T_ref, V_ref, m_t, m_v, (~pad_mask), generator
+                )
+            if self.disable_cid_loss:
+                loss_ratio = torch.zeros((), device=image_features.device)
+                loss_itm = torch.zeros((), device=image_features.device)
 
-        # Run CID module (bilateral decomposition)
-        T_con, T_inc, V_con, V_inc, m_t, m_v, loss_ratio, loss_itm = self.cid(
-            T_ref,
-            V_ref,
-            attn_mask,
-            labels=labels
-        )
-
-        valid = (~pad_mask).float()
-        valid_den = valid.sum().clamp_min(1.0)
-        m_t_valid = m_t * valid
-        m_t_mean = m_t_valid.sum() / valid_den
-        m_t_var = ((m_t_valid - m_t_mean) ** 2 * valid).sum() / valid_den
-        self.last_cid_stats = {
-            "m_t_mean": m_t_mean.detach().item(),
-            "m_t_var": m_t_var.detach().item(),
-            "m_v_mean": m_v.mean().detach().item(),
-            "m_v_var": m_v.var(unbiased=False).detach().item(),
-        }
+        if not self.disable_cid_dimm:
+            valid = (~pad_mask).float()
+            valid_den = valid.sum().clamp_min(1.0)
+            m_t_valid = m_t * valid
+            m_t_mean = m_t_valid.sum() / valid_den
+            m_t_var = ((m_t_valid - m_t_mean) ** 2 * valid).sum() / valid_den
+            self.last_cid_stats = {
+                "m_t_mean": m_t_mean.detach().item(),
+                "m_t_var": m_t_var.detach().item(),
+                "m_v_mean": m_v.mean().detach().item(),
+                "m_v_var": m_v.var(unbiased=False).detach().item(),
+            }
 
         # Run DIMM module (bilateral interaction)
-        z_cid = self.dimm(T_con, T_inc, V_con, V_inc, pad_mask, m_v=m_v)  # [B, 768]
+        if self.disable_cid_dimm:
+            z_final = self.post_ln((text_feature + image_feature) / 2.0)
+        elif self.disable_dimm:
+            z_cid = 0.5 * (masked_mean(T_con, pad_mask) + V_con.mean(dim=1))  # [B, 768]
+            z_final = self.post_ln(z_cid)
+        else:
+            z_cid = self.dimm(
+                T_con,
+                T_inc,
+                V_con,
+                V_inc,
+                pad_mask,
+                m_v=m_v,
+                drop_channel=self.dimm_drop_channel if self.dimm_drop_channel != 'none' else None
+            )  # [B, 768]
 
-        # Project and normalize CID output with residual connection
-        cid_hat = self.cid_ln(z_cid + self.cid_proj(z_cid))  # LN(z_cid + W*z_cid)
-        # ========================================================================
-
-        image_t = image_feature
-        text_im = text_feature
-
-        txt_output = text_feature
-        image_output = image_feature
-
-        txt_out = self.cross_att(txt_output, image_output, image_output)  # 32,768
-        image_out = self.cross_att(image_output, txt_output, txt_output)  # 32,768
-        # res_bert = 0.6 * image_out + 0.4 * txt_out  # 32,768
-        res_alpha = torch.softmax(self.res_weight, dim=0)
-        res_bert = res_alpha[0] * image_out + res_alpha[1] * txt_out  # 32,768
-        # res_bert = image_t + text_im
-
-        # ========================================================================
-        # CID-DIMM Connection: Align and integrate with residual connection
-        # ========================================================================
-        # Scheme A: use CID as the main branch
-        # res_new = cid_hat  # [B, 768]
-
-
-        z_final = self.post_ln(cid_hat)  # [B, 768]
+            # Project and normalize CID output with residual connection
+            cid_hat = self.cid_ln(z_cid + self.cid_proj(z_cid))  # LN(z_cid + W*z_cid)
+            z_final = self.post_ln(cid_hat)  # [B, 768]
 
         # Predict
         logits_fuse = self.classifier_fuse(z_final)  # [B, num_labels]

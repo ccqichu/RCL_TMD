@@ -1,0 +1,61 @@
+nohup: ignoring input
+
+[0;32m[2026-01-10 14:35:49] [INFO][0m =========================================
+[0;32m[2026-01-10 14:35:49] [INFO][0m 阶段1 - 批次1：架构变体验证
+[0;32m[2026-01-10 14:35:49] [INFO][0m =========================================
+[0;32m[2026-01-10 14:35:49] [INFO][0m Variants: C4, C2, C1
+[0;32m[2026-01-10 14:35:49] [INFO][0m Seed: 96
+[0;32m[2026-01-10 14:35:49] [INFO][0m Parallel GPUs: 3, 1, 2
+[0;32m[2026-01-10 14:35:49] [INFO][0m Start time: Sat Jan 10 14:35:49 CST 2026
+
+[0;32m[2026-01-10 14:35:49] [INFO][0m Checking GPUs...
+[0;32m[2026-01-10 14:35:49] [INFO][0m ✓ GPUs available
+[0;32m[2026-01-10 14:35:49] [INFO][0m ✓ CLIP model found
+[0;32m[2026-01-10 14:35:49] [INFO][0m ✓ Dataset found
+
+[0;32m[2026-01-10 14:35:49] [INFO][0m -----------------------------------------
+[0;32m[2026-01-10 14:35:49] [INFO][0m Starting 3 parallel training jobs...
+[0;32m[2026-01-10 14:35:49] [INFO][0m -----------------------------------------
+[0;32m[2026-01-10 14:35:49] [INFO][0m Starting C4 on GPU 3
+[0;32m[2026-01-10 14:35:49] [INFO][0m   Config: heads=12, layers=5, batch_size=96
+[0;32m[2026-01-10 14:35:54] [INFO][0m Starting C2 on GPU 1
+[0;32m[2026-01-10 14:35:54] [INFO][0m   Config: heads=8, layers=5, batch_size=128
+[0;32m[2026-01-10 14:35:59] [INFO][0m 
+[0;32m[2026-01-10 14:35:59] [INFO][0m Starting C1 on GPU 2
+[0;32m[2026-01-10 14:35:59] [INFO][0m Waiting for all 3 jobs to complete...
+[0;32m[2026-01-10 14:35:59] [INFO][0m   Config: heads=12, layers=4, batch_size=128
+[0;32m[2026-01-10 14:35:59] [INFO][0m   C4 (GPU 3): PID 3963540
+[0;32m[2026-01-10 14:35:59] [INFO][0m   C2 (GPU 1): PID 3964240
+[0;32m[2026-01-10 14:35:59] [INFO][0m   C1 (GPU 2): PID 3965192
+[0;32m[2026-01-10 14:35:59] [INFO][0m 
+[0;32m[2026-01-10 14:35:59] [INFO][0m Monitor progress:
+[0;32m[2026-01-10 14:35:59] [INFO][0m   watch -n 10 'nvidia-smi && tail -n 3 /home/user/chengtaiyu/RCLMuFN-main_copy/output_dir/stage1_architecture/C*/training.log'
+
+[0;32m[2026-01-10 16:20:22] [INFO][0m ✅ C4 completed successfully
+[0;32m[2026-01-10 16:20:22] [INFO][0m   Best Acc: 0.0000, Macro F1: 0.0000
+[0;32m[2026-01-10 16:20:26] [INFO][0m ✅ C1 completed successfully
+[0;32m[2026-01-10 16:20:26] [INFO][0m   Best Acc: 0.0000, Macro F1: 0.0000
+[0;32m[2026-01-10 16:23:11] [INFO][0m ✅ C2 completed successfully
+[0;32m[2026-01-10 16:23:11] [INFO][0m   Best Acc: 0.0000, Macro F1: 0.0000
+
+[0;32m[2026-01-10 16:23:11] [INFO][0m =========================================
+[0;32m[2026-01-10 16:23:11] [INFO][0m 批次1完成
+[0;32m[2026-01-10 16:23:11] [INFO][0m =========================================
+[0;32m[2026-01-10 16:23:11] [INFO][0m End time: Sat Jan 10 16:23:11 CST 2026
+
+[0;32m[2026-01-10 16:23:11] [INFO][0m ✅ C4 (heads=12, layers=5): SUCCESS
+[0;32m[2026-01-10 16:23:11] [INFO][0m ✅ C2 (heads=8, layers=5): SUCCESS
+[0;32m[2026-01-10 16:23:11] [INFO][0m ✅ C1 (heads=12, layers=4): SUCCESS
+
+[0;32m[2026-01-10 16:23:11] [INFO][0m Summary: 3 succeeded, 0 failed
+[0;32m[2026-01-10 16:23:11] [INFO][0m Results saved to: /home/user/chengtaiyu/RCLMuFN-main_copy/output_dir/stage1_results
+[0;32m[2026-01-10 16:23:11] [INFO][0m Logs saved to: /home/user/chengtaiyu/RCLMuFN-main_copy/output_dir/stage1_architecture
+
+[0;32m[2026-01-10 16:23:11] [INFO][0m =========================================
+[0;32m[2026-01-10 16:23:11] [INFO][0m 下一步：分析结果
+[0;32m[2026-01-10 16:23:11] [INFO][0m =========================================
+[0;32m[2026-01-10 16:23:11] [INFO][0m Run: python analyze_stage1.py --batch 1
+[0;32m[2026-01-10 16:23:11] [INFO][0m 
+[0;32m[2026-01-10 16:23:11] [INFO][0m This will generate a comparison table and recommend
+[0;32m[2026-01-10 16:23:11] [INFO][0m which variant to use for Batch 2.
+

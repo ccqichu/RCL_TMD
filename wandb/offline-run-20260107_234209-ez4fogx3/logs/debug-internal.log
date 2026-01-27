@@ -1,0 +1,13 @@
+{"time":"2026-01-07T23:42:09.908920531+08:00","level":"INFO","msg":"stream: starting","core version":"0.23.1"}
+{"time":"2026-01-07T23:42:10.033688268+08:00","level":"WARN","msg":"featurechecker: GraphQL client is nil, skipping feature loading"}
+{"time":"2026-01-07T23:42:10.033746476+08:00","level":"INFO","msg":"stream: created new stream","id":"ez4fogx3"}
+{"time":"2026-01-07T23:42:10.033872582+08:00","level":"INFO","msg":"stream: started","id":"ez4fogx3"}
+{"time":"2026-01-07T23:42:10.033835081+08:00","level":"INFO","msg":"handler: started","stream_id":"ez4fogx3"}
+{"time":"2026-01-07T23:42:10.033902439+08:00","level":"INFO","msg":"writer: started","stream_id":"ez4fogx3"}
+{"time":"2026-01-07T23:42:10.03390582+08:00","level":"INFO","msg":"sender: started","stream_id":"ez4fogx3"}
+{"time":"2026-01-07T23:42:10.034824755+08:00","level":"WARN","msg":"runupserter: server does not expand metric globs but the x_server_side_expand_glob_metrics setting is set; ignoring"}
+{"time":"2026-01-08T00:49:06.251370352+08:00","level":"INFO","msg":"handler: operation stats","stats":{}}
+{"time":"2026-01-08T00:49:06.315406328+08:00","level":"INFO","msg":"stream: closing","id":"ez4fogx3"}
+{"time":"2026-01-08T00:49:06.315429548+08:00","level":"INFO","msg":"handler: closed","stream_id":"ez4fogx3"}
+{"time":"2026-01-08T00:49:06.315518002+08:00","level":"INFO","msg":"sender: closed","stream_id":"ez4fogx3"}
+{"time":"2026-01-08T00:49:06.315547944+08:00","level":"INFO","msg":"stream: closed","id":"ez4fogx3"}

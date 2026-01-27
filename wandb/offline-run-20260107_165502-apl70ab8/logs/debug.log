@@ -1,0 +1,24 @@
+2026-01-07 16:55:02,336 INFO    MainThread:3879579 [wandb_setup.py:_flush():80] Current SDK version is 0.23.1
+2026-01-07 16:55:02,336 INFO    MainThread:3879579 [wandb_setup.py:_flush():80] Configure stats pid to 3879579
+2026-01-07 16:55:02,336 INFO    MainThread:3879579 [wandb_setup.py:_flush():80] Loading settings from /home/user/.config/wandb/settings
+2026-01-07 16:55:02,336 INFO    MainThread:3879579 [wandb_setup.py:_flush():80] Loading settings from /home/user/chengtaiyu/RCLMuFN-main_copy/src/wandb/settings
+2026-01-07 16:55:02,336 INFO    MainThread:3879579 [wandb_setup.py:_flush():80] Loading settings from environment variables
+2026-01-07 16:55:02,336 INFO    MainThread:3879579 [wandb_init.py:setup_run_log_directory():714] Logging user logs to /home/user/chengtaiyu/RCLMuFN-main_copy/src/wandb/offline-run-20260107_165502-apl70ab8/logs/debug.log
+2026-01-07 16:55:02,336 INFO    MainThread:3879579 [wandb_init.py:setup_run_log_directory():715] Logging internal logs to /home/user/chengtaiyu/RCLMuFN-main_copy/src/wandb/offline-run-20260107_165502-apl70ab8/logs/debug-internal.log
+2026-01-07 16:55:02,336 INFO    MainThread:3879579 [wandb_init.py:init():841] calling init triggers
+2026-01-07 16:55:02,336 INFO    MainThread:3879579 [wandb_init.py:init():846] wandb.init called with sweep_config: {}
+config: {'device': '1', 'model': 'RCLMuFN', 'text_name': 'text_final', 'simple_linear': False, 'num_train_epochs': 10, 'train_batch_size': 32, 'dev_batch_size': 32, 'label_number': 2, 'text_size': 512, 'image_size': 768, 'adam_epsilon': 1e-08, 'optimizer_name': 'adam', 'learning_rate': 0.0003, 'clip_learning_rate': 1e-06, 'max_len': 77, 'layers': 3, 'max_grad_norm': 3.0, 'weight_decay': 0.03, 'warmup_proportion': 0.2, 'dropout_rate': 0.1, 'output_dir': '../output_dir/', 'limit': None, 'seed': 7, 'lambda_ratio_start': 0.0, 'lambda_ratio_end': 0.002, 'lambda_itm_start': 0.0, 'lambda_itm_end': 0.0015, 'lambda_warmup_epochs': 2, 'lambda_ramp_epochs': 3, 'lambda_schedule': 'linear', 'neg_sampling': 'label_aware', 'tau_schedule_mode': 'epoch', 'resume_from': None, 'freeze_clip': False, '_wandb': {}}
+2026-01-07 16:55:02,336 INFO    MainThread:3879579 [wandb_init.py:init():889] starting backend
+2026-01-07 16:55:02,574 INFO    MainThread:3879579 [wandb_init.py:init():892] sending inform_init request
+2026-01-07 16:55:02,597 INFO    MainThread:3879579 [wandb_init.py:init():900] backend started and connected
+2026-01-07 16:55:02,603 INFO    MainThread:3879579 [wandb_init.py:init():970] updated telemetry
+2026-01-07 16:55:02,625 INFO    MainThread:3879579 [wandb_init.py:init():994] communicating run to backend with 90.0 second timeout
+2026-01-07 16:55:02,745 INFO    MainThread:3879579 [wandb_init.py:init():1041] starting run threads in backend
+2026-01-07 16:55:02,836 INFO    MainThread:3879579 [wandb_run.py:_console_start():2521] atexit reg
+2026-01-07 16:55:02,837 INFO    MainThread:3879579 [wandb_run.py:_redirect():2369] redirect: wrap_raw
+2026-01-07 16:55:02,837 INFO    MainThread:3879579 [wandb_run.py:_redirect():2438] Wrapping output streams.
+2026-01-07 16:55:02,837 INFO    MainThread:3879579 [wandb_run.py:_redirect():2461] Redirects installed.
+2026-01-07 16:55:02,839 INFO    MainThread:3879579 [wandb_init.py:init():1081] run started, returning control to user process
+2026-01-07 16:55:04,309 INFO    MainThread:3879579 [wandb_watch.py:_watch():68] Watching
+2026-01-07 18:08:38,654 INFO    wandb-AsyncioManager-main:3879579 [service_client.py:_forward_responses():80] Reached EOF.
+2026-01-07 18:08:38,654 INFO    wandb-AsyncioManager-main:3879579 [mailbox.py:close():137] Closing mailbox, abandoning 0 handles.

@@ -1,0 +1,13 @@
+{"time":"2026-01-10T18:34:22.918571342+08:00","level":"INFO","msg":"stream: starting","core version":"0.23.1"}
+{"time":"2026-01-10T18:34:23.054307776+08:00","level":"WARN","msg":"featurechecker: GraphQL client is nil, skipping feature loading"}
+{"time":"2026-01-10T18:34:23.054417962+08:00","level":"INFO","msg":"stream: created new stream","id":"tm658mqp"}
+{"time":"2026-01-10T18:34:23.054493319+08:00","level":"INFO","msg":"handler: started","stream_id":"tm658mqp"}
+{"time":"2026-01-10T18:34:23.054651314+08:00","level":"INFO","msg":"stream: started","id":"tm658mqp"}
+{"time":"2026-01-10T18:34:23.054665655+08:00","level":"INFO","msg":"writer: started","stream_id":"tm658mqp"}
+{"time":"2026-01-10T18:34:23.054676191+08:00","level":"INFO","msg":"sender: started","stream_id":"tm658mqp"}
+{"time":"2026-01-10T18:34:23.055387325+08:00","level":"WARN","msg":"runupserter: server does not expand metric globs but the x_server_side_expand_glob_metrics setting is set; ignoring"}
+{"time":"2026-01-10T20:17:27.393290825+08:00","level":"INFO","msg":"handler: operation stats","stats":{}}
+{"time":"2026-01-10T20:17:27.476206208+08:00","level":"INFO","msg":"stream: closing","id":"tm658mqp"}
+{"time":"2026-01-10T20:17:27.476251229+08:00","level":"INFO","msg":"handler: closed","stream_id":"tm658mqp"}
+{"time":"2026-01-10T20:17:27.476354139+08:00","level":"INFO","msg":"sender: closed","stream_id":"tm658mqp"}
+{"time":"2026-01-10T20:17:27.476398424+08:00","level":"INFO","msg":"stream: closed","id":"tm658mqp"}
