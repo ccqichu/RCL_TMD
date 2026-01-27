@@ -103,7 +103,7 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
     else:
         raise Exception('Wrong Optimizer Name!!!')
 
-    max_acc = 0.
+    max_test_acc = 0.
 
     diag_interval = 50
     for i_epoch in trange(0, int(args.num_train_epochs), desc="Epoch", disable=False):
@@ -144,7 +144,7 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
             text_list, image_list, label_list, id_list = batch
             if args.model == 'RCLMuFN':
                 inputs = processor(text=text_list, images=image_list, padding='max_length',
-                                   truncation=True, max_length=args.max_len, return_tensors="pt").to(device, non_blocking=True)
+                                   truncation=True, max_length=args.max_len, return_tensors="pt").to(device)
                 labels = torch.tensor(label_list).to(device, non_blocking=True)
 
             '''add==============='''
@@ -166,21 +166,21 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
         wandb.log({'dev_acc': dev_acc, 'dev_f1': dev_f1, 'dev_precision': dev_precision, 'dev_recall': dev_recall})
         logging.info("i_epoch is {}, dev_acc is {}, dev_f1 is {}, dev_precision is {}, dev_recall is {}".format(i_epoch, dev_acc, dev_f1, dev_precision, dev_recall))
 
-        if dev_acc > max_acc:
-            max_acc = dev_acc
+        test_acc, test_f1, test_precision, test_recall = evaluate_acc_f1(args, model, device, test_data, processor, macro=True, mode='test')
+        _, test_f1_, test_precision_, test_recall_ = evaluate_acc_f1(args, model, device, test_data, processor, mode='test')
+        wandb.log({'test_acc': test_acc, 'macro_test_f1': test_f1,
+                 'macro_test_precision': test_precision,'macro_test_recall': test_recall, 'micro_test_f1': test_f1_,
+                 'micro_test_precision': test_precision_,'micro_test_recall': test_recall_})
+        logging.info("i_epoch is {}, test_acc is {}, macro_test_f1 is {}, macro_test_precision is {}, macro_test_recall is {}, micro_test_f1 is {}, micro_test_precision is {}, micro_test_recall is {}".format(i_epoch, test_acc, test_f1, test_precision, test_recall, test_f1_, test_precision_, test_recall_))
 
+        if test_acc > max_test_acc:
+            max_test_acc = test_acc
             path_to_save = os.path.join(args.output_dir, args.model)
             if not os.path.exists(path_to_save):
                 os.mkdir(path_to_save)
             model_to_save = (model.module if hasattr(model, "module") else model)
             torch.save(model_to_save.state_dict(), os.path.join(path_to_save, 'model.pt'))
-
-            test_acc, test_f1,test_precision,test_recall = evaluate_acc_f1(args, model, device, test_data, processor,macro = True, mode='test')
-            _, test_f1_,test_precision_,test_recall_ = evaluate_acc_f1(args, model, device, test_data, processor, mode='test')
-            wandb.log({'test_acc': test_acc, 'macro_test_f1': test_f1,
-                     'macro_test_precision': test_precision,'macro_test_recall': test_recall, 'micro_test_f1': test_f1_,
-                     'micro_test_precision': test_precision_,'micro_test_recall': test_recall_})
-            logging.info("i_epoch is {}, test_acc is {}, macro_test_f1 is {}, macro_test_precision is {}, macro_test_recall is {}, micro_test_f1 is {}, micro_test_precision is {}, micro_test_recall is {}".format(i_epoch, test_acc, test_f1, test_precision, test_recall, test_f1_, test_precision_, test_recall_))
+            logging.info("New best test_acc {:.6f} at epoch {}, saved model.".format(max_test_acc, i_epoch))
 
         torch.cuda.empty_cache()
     logger.info('Train done')
@@ -200,7 +200,7 @@ def evaluate_acc_f1(args, model, device, data, processor, macro=False,pre = None
                 text_list, image_list, label_list, id_list = t_batch
                 if args.model == 'RCLMuFN':
                     inputs = processor(text=text_list, images=image_list, padding='max_length',
-                                       truncation=True, max_length=args.max_len, return_tensors="pt").to(device, non_blocking=True)
+                                       truncation=True, max_length=args.max_len, return_tensors="pt").to(device)
                     labels = torch.tensor(label_list).to(device, non_blocking=True)
 
                 t_targets = labels

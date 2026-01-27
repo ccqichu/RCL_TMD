@@ -571,7 +571,7 @@ class DIMMModule(nn.Module):
 class RCLMuFN(nn.Module):
     def __init__(self, args):
         super(RCLMuFN, self).__init__()
-        self.model = CLIPModel.from_pretrained("/home/user/chengtaiyu/models/clip-vit-base-patch32")
+        self.model = CLIPModel.from_pretrained("/home/user/2024_cty/RCLMuFN-main/src/models/clip-vit-base-patch32")
         if args.simple_linear:
             self.text_linear =  nn.Linear(args.text_size, args.image_size)
             self.image_linear =  nn.Linear(args.image_size, args.image_size)

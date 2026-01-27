@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 from model import RCLMuFN
 from train import train
 from data_set import MyDataset
@@ -16,7 +16,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def set_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--device', default='1', type=str, help='device number')
+    parser.add_argument('--device', default='0', type=str, help='device number')
     parser.add_argument('--model', default='RCLMuFN', type=str, help='the model name', choices=['RCLMuFN'])
     parser.add_argument('--text_name', default='text_final', type=str, help='the text data folder name')
     parser.add_argument('--simple_linear', default=False, type=bool, help='linear implementation choice')
@@ -37,7 +37,7 @@ def set_args():
     parser.add_argument('--weight_decay', default=0.03, type=float, help='weight decay')
     parser.add_argument('--warmup_proportion', default=0.2, type=float, help='warm up proportion')
     parser.add_argument('--dropout_rate', default=0.1, type=float, help='dropout rate')
-    parser.add_argument('--output_dir', default='../output_dir/', type=str, help='the output path')
+    parser.add_argument('--output_dir', default='../output_dir', type=str, help='the output path')
     parser.add_argument('--limit', default=None, type=int, help='the limited number of training examples')
     parser.add_argument('--seed', type=int, default=42, help='random seed')
     parser.add_argument('--lambda_ratio_start', default=0.0, type=float, help='start weight for CID ratio loss')
@@ -62,19 +62,6 @@ def set_args():
                         help='freeze CLIP model parameters (for stage 1 training)')
 
 
-    # * Backbone (disabled)
-    # parser.add_argument('--lr_backbone', default=1e-5, type=float)
-    # parser.add_argument('--backbone', default='resnet50', type=str,
-    #                     help="Name of the convolutional backbone to use")
-    # parser.add_argument('--dilation', action='store_true',
-    #                     help="If true, we replace stride with dilation in the last convolutional block (DC5)")
-    # parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned'),
-    #                     help="Type of positional embedding to use on top of the image features")
-    # parser.add_argument('--hidden_dim', default=256, type=int,
-    #                     help="Size of the embeddings (dimension of the transformer)")
-    # * Segmentation
-    # parser.add_argument('--masks', action='store_true',
-    #                     help="Train segmentation head if the flag is provided")
     return parser.parse_args()
 
 
@@ -113,7 +100,7 @@ def main():
 
     if args.model == 'RCLMuFN':
 
-        processor = CLIPProcessor.from_pretrained("/home/user/chengtaiyu/models/clip-vit-base-patch32")
+        processor = CLIPProcessor.from_pretrained("/home/user/2024_cty/RCLMuFN-main/src/models/clip-vit-base-patch32")
         model = RCLMuFN(args)
     else:
         raise RuntimeError('Error model name!')

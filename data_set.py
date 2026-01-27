@@ -11,7 +11,7 @@ from torchvision import transforms
 
 logger = logging.getLogger(__name__)
 
-WORKING_PATH="/home/user/chengtaiyu/RCLMuFN-main/data"
+WORKING_PATH="/home/user/2024_cty/RCLMuFN-main/data"
 class MyDataset(Dataset):
     def __init__(self, mode, text_name, limit=None):
         self.text_name = text_name
