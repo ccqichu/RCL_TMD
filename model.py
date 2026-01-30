@@ -742,6 +742,16 @@ class RCLMuFN(nn.Module):
             image_features = torch.zeros_like(image_features)
             image_feature = torch.zeros_like(image_feature)
 
+        if self.disable_cid_dimm:
+            z_final = self.post_ln((text_feature + image_feature) / 2.0)
+            logits_fuse = self.classifier_fuse(z_final)
+            score = nn.functional.softmax(logits_fuse, dim=-1)
+            outputs = (score,)
+            if labels is not None:
+                loss_fuse = self.loss_fct(logits_fuse, labels)
+                outputs = (loss_fuse,) + outputs
+            return outputs
+
         attn_mask = inputs.get("attention_mask", None)
         if attn_mask is None:
             input_ids = inputs.get("input_ids", None)

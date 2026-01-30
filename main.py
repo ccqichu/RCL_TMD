@@ -20,7 +20,7 @@ def set_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--device', default='0', type=str, help='device number')
     parser.add_argument('--model', default='RCLMuFN', type=str, help='the model name', choices=['RCLMuFN'])
-    parser.add_argument('--text_name', default='text_clean', type=str, help='the text data folder name')
+    parser.add_argument('--text_name', default='text_final', type=str, help='the text data folder name')
     parser.add_argument('--simple_linear', default=False, type=bool, help='linear implementation choice')
     parser.add_argument('--num_train_epochs', default=10, type=int, help='number of train epoched')
     parser.add_argument('--train_batch_size', default=32, type=int, help='batch size in train phase')
@@ -40,8 +40,8 @@ def set_args():
     parser.add_argument('--weight_decay', default=0.03, type=float, help='weight decay')
     parser.add_argument('--warmup_proportion', default=0.2, type=float, help='warm up proportion')
     parser.add_argument('--dropout_rate', default=0.1, type=float, help='dropout rate')
-    parser.add_argument('--output_dir', default='../output_dir/', type=str, help='the output path')
-    parser.add_argument('--output_base_dir', default='../output_dir/', type=str,
+    parser.add_argument('--output_dir', default='../output_dir/final_ablation', type=str, help='the output path')
+    parser.add_argument('--output_base_dir', default='../output_dir/final_ablation', type=str,
                         help='base output directory (experiment subdir will be appended)')
     parser.add_argument('--limit', default=None, type=int, help='the limited number of training examples')
     parser.add_argument('--seed', type=int, default=42, help='random seed')

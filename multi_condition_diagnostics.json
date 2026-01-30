@@ -1,0 +1,89 @@
+{
+  "metrics": {
+    "dataset_image_normal_text": {
+      "accuracy": 0.8634639696586599,
+      "correct": 2049,
+      "total": 2373
+    },
+    "dataset_image_zero_text": {
+      "accuracy": 0.6101980615254952,
+      "correct": 1448,
+      "total": 2373
+    },
+    "dataset_image_zero_image": {
+      "accuracy": 0.8187947745469869,
+      "correct": 1943,
+      "total": 2373
+    },
+    "mmsd_masked_normal_text": {
+      "accuracy": 0.865992414664981,
+      "correct": 2055,
+      "total": 2373
+    },
+    "mmsd_textonly_normal_text": {
+      "accuracy": 0.8398651495996629,
+      "correct": 1993,
+      "total": 2373
+    },
+    "random_tokens_per_sample": {
+      "accuracy": 0.6085124315212811,
+      "correct": 1444,
+      "total": 2373
+    },
+    "random_tokens_shared": {
+      "accuracy": 0.6148335440370839,
+      "correct": 1459,
+      "total": 2373
+    },
+    "rand_masked_normal_text": {
+      "accuracy": 0.865149599662874,
+      "correct": 2053,
+      "total": 2373
+    },
+    "hard_pairing": {
+      "accuracy": 0.7100716392751791,
+      "correct": 1685,
+      "total": 2373
+    },
+    "hard_image_pairing": {
+      "accuracy": 0.8525073746312685,
+      "correct": 2023,
+      "total": 2373
+    }
+  },
+  "diagnostic_map": {
+    "A_full": "dataset_image_normal_text",
+    "A0txt": "dataset_image_zero_text",
+    "A0img": "dataset_image_zero_image",
+    "AhI": "hard_pairing",
+    "AhT": "hard_image_pairing",
+    "A_RS": "random_tokens_per_sample",
+    "A_CT": "random_tokens_shared",
+    "A_noimg": "dataset_image_zero_image",
+    "A_textmasked": "mmsd_masked_normal_text",
+    "A_randmasked": "rand_masked_normal_text",
+    "A_textonly": "mmsd_textonly_normal_text"
+  },
+  "diagnostic_inputs": {
+    "k": 0.02,
+    "lam": 0.05,
+    "eps": 1e-06,
+    "A_full": 0.8634639696586599,
+    "A0txt": 0.6101980615254952,
+    "A0img": 0.8187947745469869,
+    "AhI": 0.7100716392751791,
+    "AhT": 0.8525073746312685,
+    "A_RS": 0.6085124315212811,
+    "A_CT": 0.6148335440370839,
+    "A_noimg": 0.8187947745469869,
+    "A_textmasked": 0.865992414664981,
+    "A_randmasked": 0.865149599662874,
+    "A_textonly": 0.8398651495996629
+  },
+  "diagnostics": {
+    "COMP_max": 5.173255246461689,
+    "ALIGN_hard": 9.516837481698389,
+    "STRUCT": 29.160566129819422,
+    "CLER_Soft": 29485.845332107852
+  }
+}
