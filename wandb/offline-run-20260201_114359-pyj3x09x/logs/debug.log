@@ -1,0 +1,23 @@
+2026-02-01 11:43:59,629 INFO    MainThread:2515838 [wandb_setup.py:_flush():68] Configure stats pid to 2515838
+2026-02-01 11:43:59,629 INFO    MainThread:2515838 [wandb_setup.py:_flush():68] Loading settings from /home/user/.config/wandb/settings
+2026-02-01 11:43:59,629 INFO    MainThread:2515838 [wandb_setup.py:_flush():68] Loading settings from /home/user/2024_cty/RCL_TMD/wandb/settings
+2026-02-01 11:43:59,629 INFO    MainThread:2515838 [wandb_setup.py:_flush():68] Loading settings from environment variables: {'_require_service': 'True'}
+2026-02-01 11:43:59,629 INFO    MainThread:2515838 [wandb_setup.py:_flush():68] Inferring run settings from compute environment: {'program_relpath': 'main.py', 'program': 'main.py'}
+2026-02-01 11:43:59,629 INFO    MainThread:2515838 [wandb_init.py:_log_setup():476] Logging user logs to /home/user/2024_cty/RCL_TMD/wandb/offline-run-20260201_114359-pyj3x09x/logs/debug.log
+2026-02-01 11:43:59,629 INFO    MainThread:2515838 [wandb_init.py:_log_setup():477] Logging internal logs to /home/user/2024_cty/RCL_TMD/wandb/offline-run-20260201_114359-pyj3x09x/logs/debug-internal.log
+2026-02-01 11:43:59,629 INFO    MainThread:2515838 [wandb_init.py:init():516] calling init triggers
+2026-02-01 11:43:59,629 INFO    MainThread:2515838 [wandb_init.py:init():520] wandb.init called with sweep_config: {}
+config: {'device': '0', 'model': 'RCLMuFN', 'text_name': 'text_final', 'simple_linear': False, 'num_train_epochs': 12, 'train_batch_size': 32, 'dev_batch_size': 32, 'label_number': 2, 'text_size': 512, 'image_size': 768, 'adam_epsilon': 1e-08, 'optimizer_name': 'adam', 'learning_rate': 0.0003, 'clip_learning_rate': 3e-07, 'max_len': 77, 'layers': 3, 'max_grad_norm': 1.0, 'weight_decay': 0.005, 'warmup_proportion': 0.2, 'dropout_rate': 0.3, 'output_dir': '../output_dir', 'limit': None, 'seed': 898, 'lambda_ratio_start': 0.0, 'lambda_ratio_end': 0.0015, 'lambda_itm_start': 0.0, 'lambda_itm_end': 0.001, 'lambda_warmup_epochs': 3, 'lambda_ramp_epochs': 6, 'lambda_schedule': 'cosine', 'lambda_chan_entropy': 0.0001, 'neg_sampling': 'label_aware', 'tau_schedule_mode': 'epoch', 'use_ema': True, 'ema_decay': 0.9999, 'ema_eval_mode': 'both', 'resume_from': None, 'freeze_clip': False}
+2026-02-01 11:43:59,630 INFO    MainThread:2515838 [wandb_init.py:init():569] starting backend
+2026-02-01 11:43:59,630 INFO    MainThread:2515838 [wandb_init.py:init():573] setting up manager
+2026-02-01 11:43:59,632 INFO    MainThread:2515838 [backend.py:_multiprocessing_setup():104] multiprocessing start_methods=fork,spawn,forkserver, using: spawn
+2026-02-01 11:43:59,634 INFO    MainThread:2515838 [wandb_init.py:init():580] backend started and connected
+2026-02-01 11:43:59,641 INFO    MainThread:2515838 [wandb_init.py:init():658] updated telemetry
+2026-02-01 11:43:59,667 INFO    MainThread:2515838 [wandb_init.py:init():727] starting run threads in backend
+2026-02-01 11:44:02,865 INFO    MainThread:2515838 [wandb_run.py:_console_start():1954] atexit reg
+2026-02-01 11:44:02,866 INFO    MainThread:2515838 [wandb_run.py:_redirect():1812] redirect: SettingsConsole.WRAP_RAW
+2026-02-01 11:44:02,866 INFO    MainThread:2515838 [wandb_run.py:_redirect():1877] Wrapping output streams.
+2026-02-01 11:44:02,866 INFO    MainThread:2515838 [wandb_run.py:_redirect():1899] Redirects installed.
+2026-02-01 11:44:02,867 INFO    MainThread:2515838 [wandb_init.py:init():764] run started, returning control to user process
+2026-02-01 11:44:07,842 INFO    MainThread:2515838 [wandb_watch.py:watch():51] Watching
+2026-02-01 14:10:14,644 WARNING MsgRouterThr:2515838 [router.py:message_loop():77] message_loop has been closed

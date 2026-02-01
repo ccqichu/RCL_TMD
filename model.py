@@ -439,6 +439,12 @@ class DIMMModule(nn.Module):
             batch_first=True
         )
         self.seq_fusion_ln = nn.LayerNorm(hidden_dim)
+        self.channel_embed = nn.Parameter(torch.zeros(4, hidden_dim))
+        self.channel_gate = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 2, 1)
+        )
 
         # Final fusion MLP (text + vision)
         self.final_mlp = nn.Sequential(
@@ -454,7 +460,7 @@ class DIMMModule(nn.Module):
         denom = weights.sum(dim=1, keepdim=True).clamp_min(1e-6)
         return (x * weights.unsqueeze(-1)).sum(dim=1) / denom
 
-    def forward(self, T_con, T_inc, V_con, V_inc, pad_mask, m_v=None):
+    def forward(self, T_con, T_inc, V_con, V_inc, pad_mask, m_v=None, m_t=None):
         # Ensure pad_mask matches sequence length
         if pad_mask.size(1) != T_con.size(1):
             if pad_mask.size(1) > T_con.size(1):
@@ -498,9 +504,8 @@ class DIMMModule(nn.Module):
         )
         T_mis2 = self.ln_mis(T_inc + T_mis2)  # [B, Lt, 768]
 
-        # Merge two mismatch directions at sequence level
-        # Use element-wise average to combine them
-        T_mis = (T_mis1 + T_mis2) / 2.0  # [B, Lt, 768]
+        # Merge two mismatch directions with learnable fusion
+        T_mis = self.mis_mlp(torch.cat([T_mis1, T_mis2], dim=-1))  # [B, Lt, 768]
 
         # Channel 3: Intra-Text Conflict (T_con -> T_inc)
         T_conf, _ = self.mha_tconf(
@@ -512,34 +517,52 @@ class DIMMModule(nn.Module):
         T_conf = self.ln_tconf(T_con + T_conf)  # [B, Lt, 768]
 
         # ====================================================================
-        # Sequence-level Fusion: Concatenate 4 channels and fuse with MHA
+        # Channel-dimension Fusion: per-token fusion across 4 channels
         # ====================================================================
 
-        # Concatenate 4 text channels along sequence dimension
-        # Shape: [B, 4*Lt, 768]
-        T_all = torch.cat([T_match, T_mis, T_conf, T_con], dim=1)
+        channels = [T_match, T_mis, T_conf, T_con]
+        for i in range(4):
+            channels[i] = channels[i] + self.channel_embed[i].view(1, 1, -1)
+        # [B, Lt, 4, 768]
+        T_stack = torch.stack(channels, dim=2)
+        gate_logits = self.channel_gate(T_stack)  # [B, Lt, 4, 1]
+        channel_weights = F.softmax(gate_logits, dim=2)
+        # Average over tokens for logging: [B, 4]
+        self.last_channel_weights = channel_weights.mean(dim=1).squeeze(-1).detach()
 
-        # Extend pad_mask for concatenated sequence
-        # Repeat pad_mask 4 times (one for each channel)
-        pad_mask_extended = torch.cat([pad_mask, pad_mask, pad_mask, pad_mask], dim=1)  # [B, 4*Lt]
+        # Fuse channel dimension -> [B, Lt, 768]
+        T_fused = (T_stack * channel_weights).sum(dim=2)
 
-        # Apply self-attention to fuse across channels
-        T_fused, _ = self.seq_fusion_mha(
-            query=T_all,
-            key=T_all,
-            value=T_all,
-            key_padding_mask=pad_mask_extended
+        # Sequence-level self-attention over fused tokens
+        T_seq, _ = self.seq_fusion_mha(
+            query=T_fused,
+            key=T_fused,
+            value=T_fused,
+            key_padding_mask=pad_mask
         )
-        T_fused = self.seq_fusion_ln(T_all + T_fused)  # Residual connection
+        T_fused = self.seq_fusion_ln(T_fused + T_seq)
 
-        # Pool to get text representation
-        z_text = masked_mean(T_fused, pad_mask_extended)  # [B, 768]
+        # Pool to get text representation (m_t-weighted if provided)
+        if m_t is not None:
+            if m_t.size(1) != T_fused.size(1):
+                if m_t.size(1) > T_fused.size(1):
+                    m_t = m_t[:, :T_fused.size(1)]
+                else:
+                    extra_len = T_fused.size(1) - m_t.size(1)
+                    extra = torch.zeros(m_t.size(0), extra_len,
+                                        dtype=m_t.dtype, device=m_t.device)
+                    m_t = torch.cat([m_t, extra], dim=1)
+            m_t = m_t * (~pad_mask).float()
+            z_text = self._weighted_pool(T_fused, m_t)  # [B, 768]
+        else:
+            z_text = masked_mean(T_fused, pad_mask)  # [B, 768]
 
         # ====================================================================
         # Vision Channel 4: Intra-Vision Conflict (V_con -> V_inc)
         # ====================================================================
 
-        if m_v is None:
+        mv_missing = m_v is None
+        if mv_missing:
             m_v = torch.ones(V_con.size(0), V_con.size(1),
                              dtype=V_con.dtype, device=V_con.device)
         if m_v.size(1) != V_con.size(1):
@@ -550,7 +573,11 @@ class DIMMModule(nn.Module):
                 extra = torch.ones(m_v.size(0), extra_len,
                                    dtype=m_v.dtype, device=m_v.device)
                 m_v = torch.cat([m_v, extra], dim=1)
-        v_mask = (m_v < self.vision_conf_threshold)
+        if mv_missing:
+            m_inc = torch.ones_like(m_v)
+        else:
+            m_inc = 1.0 - m_v
+        v_mask = (m_inc < self.vision_conf_threshold)
         V_conf, _ = self.mha_vconf(
             query=V_con,
             key=V_inc,
@@ -558,7 +585,7 @@ class DIMMModule(nn.Module):
             key_padding_mask=v_mask
         )
         V_conf = self.ln_vconf(V_con + V_conf)
-        z_vision = self._weighted_pool(V_conf, m_v)  # [B, 768]
+        z_vision = self._weighted_pool(V_conf, m_inc)  # [B, 768]
 
         # ====================================================================
         # Final Fusion: Combine text and vision
@@ -664,6 +691,7 @@ class RCLMuFN(nn.Module):
         # using _schedule_lambda() based on args.lambda_*_start/end
         self.lambda_ratio = getattr(args, 'lambda_ratio_start', 0.0)
         self.lambda_itm = getattr(args, 'lambda_itm_start', 0.0)
+        self.lambda_chan_entropy = getattr(args, 'lambda_chan_entropy', 0.0)
 
     def set_epoch(self, epoch):
         """
@@ -747,7 +775,20 @@ class RCLMuFN(nn.Module):
         }
 
         # Run DIMM module (bilateral interaction)
-        z_cid = self.dimm(T_con, T_inc, V_con, V_inc, pad_mask, m_v=m_v)  # [B, 768]
+        z_cid = self.dimm(T_con, T_inc, V_con, V_inc, pad_mask, m_v=m_v, m_t=m_t)  # [B, 768]
+        dimm_entropy = None
+        if hasattr(self.dimm, "last_channel_weights"):
+            w = self.dimm.last_channel_weights
+            if w is not None:
+                self.last_dimm_stats = {
+                    "dimm_w_match": w[:, 0].mean().item(),
+                    "dimm_w_mismatch": w[:, 1].mean().item(),
+                    "dimm_w_tconf": w[:, 2].mean().item(),
+                    "dimm_w_tcon": w[:, 3].mean().item(),
+                }
+                eps = 1e-8
+                dimm_entropy = -(w * (w + eps).log()).sum(dim=1).mean()
+                self.last_dimm_stats["dimm_entropy"] = dimm_entropy.detach().item()
 
         # Project and normalize CID output with residual connection
         cid_hat = self.cid_ln(z_cid + self.cid_proj(z_cid))  # LN(z_cid + W*z_cid)
@@ -787,6 +828,8 @@ class RCLMuFN(nn.Module):
             # ====================================================================
             # Combine classification loss with CID consistency losses
             loss = loss_fuse + self.lambda_ratio * loss_ratio + self.lambda_itm * loss_itm
+            if dimm_entropy is not None and self.lambda_chan_entropy > 0:
+                loss = loss + self.lambda_chan_entropy * (-dimm_entropy)
             # ====================================================================
             outputs = (loss,) + outputs
         return outputs

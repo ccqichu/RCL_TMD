@@ -8,6 +8,39 @@ from tqdm import tqdm, trange
 from sklearn import metrics
 import wandb
 
+
+class EMA:
+    def __init__(self, model, decay=0.9999):
+        self.decay = decay
+        self.shadow = {}
+        self.backup = {}
+        self.register(model)
+
+    def register(self, model):
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                self.shadow[name] = param.data.clone()
+
+    def update(self, model):
+        with torch.no_grad():
+            for name, param in model.named_parameters():
+                if name in self.shadow:
+                    new = (1.0 - self.decay) * param.data
+                    self.shadow[name].mul_(self.decay).add_(new)
+
+    def apply_shadow(self, model):
+        self.backup = {}
+        for name, param in model.named_parameters():
+            if name in self.shadow:
+                self.backup[name] = param.data.clone()
+                param.data.copy_(self.shadow[name])
+
+    def restore(self, model):
+        for name, param in model.named_parameters():
+            if name in self.backup:
+                param.data.copy_(self.backup[name])
+        self.backup = {}
+
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt='%m/%d/%Y %H:%M:%S',
                     level=logging.INFO)
@@ -39,6 +72,8 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
                               pin_memory=True)
     total_steps = int(len(train_loader) * args.num_train_epochs)
     model.to(device, non_blocking=True)
+    ema = EMA(model, args.ema_decay) if getattr(args, 'use_ema', False) else None
+    ema_eval_mode = getattr(args, 'ema_eval_mode', 'raw')
 
     # Freeze CLIP if specified (for stage 1 training)
     if hasattr(args, 'freeze_clip') and args.freeze_clip:
@@ -153,33 +188,105 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
             sum_step += 1
 
             iter_bar.set_description("Iter (loss=%5.3f)" % loss.item())
-            if hasattr(model, "last_cid_stats") and step % diag_interval == 0:
-                wandb.log(model.last_cid_stats)
+            if step % diag_interval == 0:
+                diag_log = {}
+                if hasattr(model, "last_cid_stats"):
+                    diag_log.update(model.last_cid_stats)
+                if hasattr(model, "last_dimm_stats"):
+                    diag_log.update(model.last_dimm_stats)
+                if diag_log:
+                    wandb.log(diag_log)
             loss.backward()
             optimizer.step()
             if args.optimizer_name == 'adam':
                 scheduler.step() 
             optimizer.zero_grad()
+            if ema is not None:
+                ema.update(model)
 
         wandb.log({'train_loss': sum_loss/sum_step})
-        dev_acc, dev_f1 ,dev_precision,dev_recall = evaluate_acc_f1(args, model, device, dev_data, processor, mode='dev')
-        wandb.log({'dev_acc': dev_acc, 'dev_f1': dev_f1, 'dev_precision': dev_precision, 'dev_recall': dev_recall})
-        logging.info("i_epoch is {}, dev_acc is {}, dev_f1 is {}, dev_precision is {}, dev_recall is {}".format(i_epoch, dev_acc, dev_f1, dev_precision, dev_recall))
 
-        test_acc, test_f1, test_precision, test_recall = evaluate_acc_f1(args, model, device, test_data, processor, macro=True, mode='test')
-        _, test_f1_, test_precision_, test_recall_ = evaluate_acc_f1(args, model, device, test_data, processor, mode='test')
-        wandb.log({'test_acc': test_acc, 'macro_test_f1': test_f1,
-                 'macro_test_precision': test_precision,'macro_test_recall': test_recall, 'micro_test_f1': test_f1_,
-                 'micro_test_precision': test_precision_,'micro_test_recall': test_recall_})
-        logging.info("i_epoch is {}, test_acc is {}, macro_test_f1 is {}, macro_test_precision is {}, macro_test_recall is {}, micro_test_f1 is {}, micro_test_precision is {}, micro_test_recall is {}".format(i_epoch, test_acc, test_f1, test_precision, test_recall, test_f1_, test_precision_, test_recall_))
+        def _eval_with_ema(use_ema, macro=False, mode='dev'):
+            if use_ema and ema is not None:
+                ema.apply_shadow(model)
+            acc, f1, precision, recall = evaluate_acc_f1(
+                args, model, device, dev_data if mode == 'dev' else test_data,
+                processor, macro=macro, mode=mode
+            )
+            if use_ema and ema is not None:
+                ema.restore(model)
+            return acc, f1, precision, recall
 
-        if test_acc > max_test_acc:
-            max_test_acc = test_acc
+        if ema is None or ema_eval_mode == 'raw':
+            dev_acc, dev_f1, dev_precision, dev_recall = _eval_with_ema(False, mode='dev')
+            wandb.log({'dev_acc': dev_acc, 'dev_f1': dev_f1, 'dev_precision': dev_precision, 'dev_recall': dev_recall})
+            logging.info("i_epoch is {}, dev_acc is {}, dev_f1 is {}, dev_precision is {}, dev_recall is {}".format(
+                i_epoch, dev_acc, dev_f1, dev_precision, dev_recall))
+
+            test_acc, test_f1, test_precision, test_recall = _eval_with_ema(False, macro=True, mode='test')
+            _, test_f1_, test_precision_, test_recall_ = _eval_with_ema(False, mode='test')
+            wandb.log({'test_acc': test_acc, 'macro_test_f1': test_f1,
+                     'macro_test_precision': test_precision,'macro_test_recall': test_recall, 'micro_test_f1': test_f1_,
+                     'micro_test_precision': test_precision_,'micro_test_recall': test_recall_})
+            logging.info("i_epoch is {}, test_acc is {}, macro_test_f1 is {}, macro_test_precision is {}, macro_test_recall is {}, micro_test_f1 is {}, micro_test_precision is {}, micro_test_recall is {}".format(
+                i_epoch, test_acc, test_f1, test_precision, test_recall, test_f1_, test_precision_, test_recall_))
+            best_acc = test_acc
+            save_ema = False
+        elif ema_eval_mode == 'ema':
+            dev_acc, dev_f1, dev_precision, dev_recall = _eval_with_ema(True, mode='dev')
+            wandb.log({'dev_acc': dev_acc, 'dev_f1': dev_f1, 'dev_precision': dev_precision, 'dev_recall': dev_recall})
+            logging.info("i_epoch is {}, dev_acc is {}, dev_f1 is {}, dev_precision is {}, dev_recall is {} (ema)".format(
+                i_epoch, dev_acc, dev_f1, dev_precision, dev_recall))
+
+            test_acc, test_f1, test_precision, test_recall = _eval_with_ema(True, macro=True, mode='test')
+            _, test_f1_, test_precision_, test_recall_ = _eval_with_ema(True, mode='test')
+            wandb.log({'test_acc': test_acc, 'macro_test_f1': test_f1,
+                     'macro_test_precision': test_precision,'macro_test_recall': test_recall, 'micro_test_f1': test_f1_,
+                     'micro_test_precision': test_precision_,'micro_test_recall': test_recall_})
+            logging.info("i_epoch is {}, test_acc is {}, macro_test_f1 is {}, macro_test_precision is {}, macro_test_recall is {}, micro_test_f1 is {}, micro_test_precision is {}, micro_test_recall is {} (ema)".format(
+                i_epoch, test_acc, test_f1, test_precision, test_recall, test_f1_, test_precision_, test_recall_))
+            best_acc = test_acc
+            save_ema = True
+        else:
+            dev_acc, dev_f1, dev_precision, dev_recall = _eval_with_ema(False, mode='dev')
+            wandb.log({'dev_acc': dev_acc, 'dev_f1': dev_f1, 'dev_precision': dev_precision, 'dev_recall': dev_recall})
+            logging.info("i_epoch is {}, dev_acc is {}, dev_f1 is {}, dev_precision is {}, dev_recall is {}".format(
+                i_epoch, dev_acc, dev_f1, dev_precision, dev_recall))
+
+            test_acc, test_f1, test_precision, test_recall = _eval_with_ema(False, macro=True, mode='test')
+            _, test_f1_, test_precision_, test_recall_ = _eval_with_ema(False, mode='test')
+            wandb.log({'test_acc': test_acc, 'macro_test_f1': test_f1,
+                     'macro_test_precision': test_precision,'macro_test_recall': test_recall, 'micro_test_f1': test_f1_,
+                     'micro_test_precision': test_precision_,'micro_test_recall': test_recall_})
+
+            dev_acc_e, dev_f1_e, dev_precision_e, dev_recall_e = _eval_with_ema(True, mode='dev')
+            wandb.log({'dev_acc_ema': dev_acc_e, 'dev_f1_ema': dev_f1_e, 'dev_precision_ema': dev_precision_e, 'dev_recall_ema': dev_recall_e})
+
+            test_acc_e, test_f1_e, test_precision_e, test_recall_e = _eval_with_ema(True, macro=True, mode='test')
+            _, test_f1_e_, test_precision_e_, test_recall_e_ = _eval_with_ema(True, mode='test')
+            wandb.log({'test_acc_ema': test_acc_e, 'macro_test_f1_ema': test_f1_e,
+                     'macro_test_precision_ema': test_precision_e,'macro_test_recall_ema': test_recall_e, 'micro_test_f1_ema': test_f1_e_,
+                     'micro_test_precision_ema': test_precision_e_,'micro_test_recall_ema': test_recall_e_})
+            logging.info("i_epoch is {}, test_acc raw {:.6f}, ema {:.6f}".format(i_epoch, test_acc, test_acc_e))
+            if test_acc_e > test_acc:
+                best_acc = test_acc_e
+                save_ema = True
+            else:
+                best_acc = test_acc
+                save_ema = False
+
+        if best_acc > max_test_acc:
+            max_test_acc = best_acc
             path_to_save = os.path.join(args.output_dir, args.model)
             if not os.path.exists(path_to_save):
                 os.mkdir(path_to_save)
             model_to_save = (model.module if hasattr(model, "module") else model)
-            torch.save(model_to_save.state_dict(), os.path.join(path_to_save, 'model.pt'))
+            if save_ema and ema is not None:
+                ema.apply_shadow(model)
+                torch.save(model_to_save.state_dict(), os.path.join(path_to_save, 'model.pt'))
+                ema.restore(model)
+            else:
+                torch.save(model_to_save.state_dict(), os.path.join(path_to_save, 'model.pt'))
             logging.info("New best test_acc {:.6f} at epoch {}, saved model.".format(max_test_acc, i_epoch))
 
         torch.cuda.empty_cache()

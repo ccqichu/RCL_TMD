@@ -1,0 +1,87 @@
+2026-02-01 19:05:27,016 INFO    StreamThr :354596 [internal.py:wandb_internal():91] W&B internal server running at pid: 354596, started at: 2026-02-01 19:05:27.015010
+2026-02-01 19:05:27,018 DEBUG   HandlerThread:354596 [handler.py:handle_request():138] handle_request: status
+2026-02-01 19:05:27,020 DEBUG   SenderThread:354596 [sender.py:send_request():315] send_request: status
+2026-02-01 19:05:27,022 INFO    WriterThread:354596 [datastore.py:open_for_write():75] open: /home/user/2024_cty/RCL_TMD/wandb/offline-run-20260201_190526-y8brry7x/run-y8brry7x.wandb
+2026-02-01 19:05:27,065 DEBUG   HandlerThread:354596 [handler.py:handle_request():138] handle_request: run_start
+2026-02-01 19:05:27,083 DEBUG   HandlerThread:354596 [meta.py:__init__():34] meta init
+2026-02-01 19:05:27,083 DEBUG   HandlerThread:354596 [meta.py:__init__():49] meta init done
+2026-02-01 19:05:27,083 DEBUG   HandlerThread:354596 [meta.py:probe():215] probe
+2026-02-01 19:05:27,091 DEBUG   HandlerThread:354596 [meta.py:_setup_git():205] setup git
+2026-02-01 19:05:27,123 DEBUG   HandlerThread:354596 [meta.py:_setup_git():212] setup git done
+2026-02-01 19:05:27,123 DEBUG   HandlerThread:354596 [meta.py:_save_pip():53] save pip
+2026-02-01 19:05:27,124 DEBUG   HandlerThread:354596 [meta.py:_save_pip():67] save pip done
+2026-02-01 19:05:27,124 DEBUG   HandlerThread:354596 [meta.py:_save_conda():74] save conda
+2026-02-01 19:05:30,753 DEBUG   HandlerThread:354596 [meta.py:_save_conda():84] save conda done
+2026-02-01 19:05:30,754 DEBUG   HandlerThread:354596 [meta.py:probe():253] probe done
+2026-02-01 19:05:34,216 DEBUG   HandlerThread:354596 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 19:05:40,693 DEBUG   HandlerThread:354596 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 19:05:46,244 DEBUG   SenderThread:354596 [sender.py:send():301] send: exit
+2026-02-01 19:05:46,245 INFO    SenderThread:354596 [sender.py:send_exit():437] handling exit code: 255
+2026-02-01 19:05:46,246 INFO    SenderThread:354596 [sender.py:send_exit():439] handling runtime: 19
+2026-02-01 19:05:46,246 INFO    SenderThread:354596 [sender.py:_save_file():1155] saving file wandb-summary.json with policy end
+2026-02-01 19:05:46,247 INFO    SenderThread:354596 [sender.py:send_exit():445] send defer
+2026-02-01 19:05:46,247 DEBUG   HandlerThread:354596 [handler.py:handle_request():138] handle_request: defer
+2026-02-01 19:05:46,247 INFO    HandlerThread:354596 [handler.py:handle_request_defer():161] handle defer: 0
+2026-02-01 19:05:46,248 DEBUG   SenderThread:354596 [sender.py:send_request():315] send_request: defer
+2026-02-01 19:05:46,248 INFO    SenderThread:354596 [sender.py:send_request_defer():454] handle sender defer: 0
+2026-02-01 19:05:46,248 INFO    SenderThread:354596 [sender.py:transition_state():458] send defer: 1
+2026-02-01 19:05:46,248 DEBUG   HandlerThread:354596 [handler.py:handle_request():138] handle_request: defer
+2026-02-01 19:05:46,248 INFO    HandlerThread:354596 [handler.py:handle_request_defer():161] handle defer: 1
+2026-02-01 19:05:46,402 DEBUG   SenderThread:354596 [sender.py:send_request():315] send_request: defer
+2026-02-01 19:05:46,403 INFO    SenderThread:354596 [sender.py:send_request_defer():454] handle sender defer: 1
+2026-02-01 19:05:46,403 INFO    SenderThread:354596 [sender.py:transition_state():458] send defer: 2
+2026-02-01 19:05:46,404 DEBUG   HandlerThread:354596 [handler.py:handle_request():138] handle_request: defer
+2026-02-01 19:05:46,404 INFO    HandlerThread:354596 [handler.py:handle_request_defer():161] handle defer: 2
+2026-02-01 19:05:46,404 DEBUG   SenderThread:354596 [sender.py:send_request():315] send_request: defer
+2026-02-01 19:05:46,404 INFO    SenderThread:354596 [sender.py:send_request_defer():454] handle sender defer: 2
+2026-02-01 19:05:46,404 INFO    SenderThread:354596 [sender.py:transition_state():458] send defer: 3
+2026-02-01 19:05:46,405 DEBUG   HandlerThread:354596 [handler.py:handle_request():138] handle_request: defer
+2026-02-01 19:05:46,405 INFO    HandlerThread:354596 [handler.py:handle_request_defer():161] handle defer: 3
+2026-02-01 19:05:46,405 DEBUG   SenderThread:354596 [sender.py:send_request():315] send_request: defer
+2026-02-01 19:05:46,405 INFO    SenderThread:354596 [sender.py:send_request_defer():454] handle sender defer: 3
+2026-02-01 19:05:46,405 INFO    SenderThread:354596 [sender.py:transition_state():458] send defer: 4
+2026-02-01 19:05:46,406 DEBUG   HandlerThread:354596 [handler.py:handle_request():138] handle_request: defer
+2026-02-01 19:05:46,406 INFO    HandlerThread:354596 [handler.py:handle_request_defer():161] handle defer: 4
+2026-02-01 19:05:46,407 DEBUG   SenderThread:354596 [sender.py:send_request():315] send_request: defer
+2026-02-01 19:05:46,407 INFO    SenderThread:354596 [sender.py:send_request_defer():454] handle sender defer: 4
+2026-02-01 19:05:46,407 INFO    SenderThread:354596 [sender.py:transition_state():458] send defer: 5
+2026-02-01 19:05:46,407 DEBUG   HandlerThread:354596 [handler.py:handle_request():138] handle_request: defer
+2026-02-01 19:05:46,407 INFO    HandlerThread:354596 [handler.py:handle_request_defer():161] handle defer: 5
+2026-02-01 19:05:46,408 DEBUG   SenderThread:354596 [sender.py:send_request():315] send_request: defer
+2026-02-01 19:05:46,408 INFO    SenderThread:354596 [sender.py:send_request_defer():454] handle sender defer: 5
+2026-02-01 19:05:46,408 INFO    SenderThread:354596 [sender.py:transition_state():458] send defer: 6
+2026-02-01 19:05:46,408 DEBUG   HandlerThread:354596 [handler.py:handle_request():138] handle_request: defer
+2026-02-01 19:05:46,408 INFO    HandlerThread:354596 [handler.py:handle_request_defer():161] handle defer: 6
+2026-02-01 19:05:46,409 DEBUG   SenderThread:354596 [sender.py:send_request():315] send_request: defer
+2026-02-01 19:05:46,409 INFO    SenderThread:354596 [sender.py:send_request_defer():454] handle sender defer: 6
+2026-02-01 19:05:46,409 INFO    SenderThread:354596 [sender.py:transition_state():458] send defer: 7
+2026-02-01 19:05:46,409 DEBUG   HandlerThread:354596 [handler.py:handle_request():138] handle_request: defer
+2026-02-01 19:05:46,409 INFO    HandlerThread:354596 [handler.py:handle_request_defer():161] handle defer: 7
+2026-02-01 19:05:46,409 DEBUG   SenderThread:354596 [sender.py:send_request():315] send_request: defer
+2026-02-01 19:05:46,409 INFO    SenderThread:354596 [sender.py:send_request_defer():454] handle sender defer: 7
+2026-02-01 19:05:46,409 INFO    SenderThread:354596 [sender.py:transition_state():458] send defer: 8
+2026-02-01 19:05:46,410 DEBUG   HandlerThread:354596 [handler.py:handle_request():138] handle_request: defer
+2026-02-01 19:05:46,410 INFO    HandlerThread:354596 [handler.py:handle_request_defer():161] handle defer: 8
+2026-02-01 19:05:46,410 DEBUG   SenderThread:354596 [sender.py:send_request():315] send_request: defer
+2026-02-01 19:05:46,410 INFO    SenderThread:354596 [sender.py:send_request_defer():454] handle sender defer: 8
+2026-02-01 19:05:46,410 INFO    SenderThread:354596 [sender.py:transition_state():458] send defer: 9
+2026-02-01 19:05:46,410 DEBUG   HandlerThread:354596 [handler.py:handle_request():138] handle_request: defer
+2026-02-01 19:05:46,410 INFO    HandlerThread:354596 [handler.py:handle_request_defer():161] handle defer: 9
+2026-02-01 19:05:46,411 DEBUG   SenderThread:354596 [sender.py:send_request():315] send_request: defer
+2026-02-01 19:05:46,411 INFO    SenderThread:354596 [sender.py:send_request_defer():454] handle sender defer: 9
+2026-02-01 19:05:46,411 INFO    SenderThread:354596 [sender.py:transition_state():458] send defer: 10
+2026-02-01 19:05:46,411 DEBUG   HandlerThread:354596 [handler.py:handle_request():138] handle_request: defer
+2026-02-01 19:05:46,411 INFO    HandlerThread:354596 [handler.py:handle_request_defer():161] handle defer: 10
+2026-02-01 19:05:46,411 DEBUG   SenderThread:354596 [sender.py:send_request():315] send_request: defer
+2026-02-01 19:05:46,411 INFO    SenderThread:354596 [sender.py:send_request_defer():454] handle sender defer: 10
+2026-02-01 19:05:46,411 INFO    SenderThread:354596 [sender.py:transition_state():458] send defer: 11
+2026-02-01 19:05:46,412 DEBUG   SenderThread:354596 [sender.py:send():301] send: final
+2026-02-01 19:05:46,412 DEBUG   HandlerThread:354596 [handler.py:handle_request():138] handle_request: defer
+2026-02-01 19:05:46,412 INFO    HandlerThread:354596 [handler.py:handle_request_defer():161] handle defer: 11
+2026-02-01 19:05:46,413 DEBUG   SenderThread:354596 [sender.py:send_request():315] send_request: defer
+2026-02-01 19:05:46,413 INFO    SenderThread:354596 [sender.py:send_request_defer():454] handle sender defer: 11
+2026-02-01 19:05:52,046 WARNING StreamThr :354596 [internal.py:is_dead():386] Internal process exiting, parent pid 352682 disappeared
+2026-02-01 19:05:52,047 ERROR   StreamThr :354596 [internal.py:wandb_internal():147] Internal process shutdown.
+2026-02-01 19:05:52,414 INFO    WriterThread:354596 [datastore.py:close():279] close: /home/user/2024_cty/RCL_TMD/wandb/offline-run-20260201_190526-y8brry7x/run-y8brry7x.wandb
+2026-02-01 19:05:52,414 INFO    SenderThread:354596 [sender.py:finish():1315] shutting down sender
+2026-02-01 19:05:52,420 INFO    HandlerThread:354596 [handler.py:finish():807] shutting down handler

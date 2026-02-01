@@ -1,0 +1,17 @@
+wandb: Tracking run with wandb version 0.13.3
+wandb: W&B syncing is set to `offline` in this directory.  
+wandb: Run `wandb online` or set WANDB_MODE=online to enable cloud syncing.
+Use AdamW Optimizer for Training.
+/home/user/.conda/envs/MMSD2.0/lib/python3.7/site-packages/transformers/optimization.py:411: FutureWarning: This implementation of AdamW is deprecated and will be removed in a future version. Use the PyTorch implementation torch.optim.AdamW instead, or set `no_deprecation_warning=True` to disable this warning
+  FutureWarning,
+Epoch:   0%|          | 0/12 [00:00<?, ?it/s]
+Iter (loss=X.XXX):   0%|          | 0/612 [00:00<?, ?it/s][A
+Iter (loss=0.816):   0%|          | 0/612 [00:02<?, ?it/s][A
+Iter (loss=0.816):   0%|          | 1/612 [00:06<1:01:12,  6.01s/it][A
+Iter (loss=0.974):   0%|          | 1/612 [00:07<1:01:12,  6.01s/it][A
+Iter (loss=0.974):   0%|          | 2/612 [00:10<49:10,  4.84s/it]  [A
+Iter (loss=0.813):   0%|          | 2/612 [00:11<49:10,  4.84s/it][A
+Iter (loss=0.813):   0%|          | 3/612 [00:14<49:21,  4.86s/it][A
+Iter (loss=0.883):   0%|          | 3/612 [00:16<49:21,  4.86s/it][A
+Iter (loss=0.883):   1%|          | 4/612 [00:19<46:42,  4.61s/it][A
+Iter (loss=0.840):   1%|          | 4/612 [00:21<46:42,  4.61s/it][A

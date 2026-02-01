@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 from model import RCLMuFN
 from train import train
 from data_set import MyDataset
@@ -18,7 +18,7 @@ def set_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--device', default='0', type=str, help='device number')
     parser.add_argument('--model', default='RCLMuFN', type=str, help='the model name', choices=['RCLMuFN'])
-    parser.add_argument('--text_name', default='text_final', type=str, help='the text data folder name')
+    parser.add_argument('--text_name', default='text_clean', type=str, help='the text data folder name')
     parser.add_argument('--simple_linear', default=False, type=bool, help='linear implementation choice')
     parser.add_argument('--num_train_epochs', default=10, type=int, help='number of train epoched')
     parser.add_argument('--train_batch_size', default=32, type=int, help='batch size in train phase')
@@ -39,21 +39,30 @@ def set_args():
     parser.add_argument('--dropout_rate', default=0.1, type=float, help='dropout rate')
     parser.add_argument('--output_dir', default='../output_dir', type=str, help='the output path')
     parser.add_argument('--limit', default=None, type=int, help='the limited number of training examples')
-    parser.add_argument('--seed', type=int, default=42, help='random seed')
+    parser.add_argument('--seed', type=int, default=52, help='random seed')
     parser.add_argument('--lambda_ratio_start', default=0.0, type=float, help='start weight for CID ratio loss')
     parser.add_argument('--lambda_ratio_end', default=2e-3, type=float, help='end weight for CID ratio loss')
     parser.add_argument('--lambda_itm_start', default=0.0, type=float, help='start weight for CID ITM loss')
     parser.add_argument('--lambda_itm_end', default=1.5e-3, type=float, help='end weight for CID ITM loss')
     parser.add_argument('--lambda_warmup_epochs', default=2, type=int, help='epochs to keep lambda at start value')
-    parser.add_argument('--lambda_ramp_epochs', default=3, type=int, help='epochs to ramp from start to end')
-    parser.add_argument('--lambda_schedule', default='linear', type=str,
+    parser.add_argument('--lambda_ramp_epochs', default=5, type=int, help='epochs to ramp from start to end')
+    parser.add_argument('--lambda_schedule', default='cosine', type=str,
                         choices=['none', 'linear', 'cosine'], help='schedule type for CID loss weights')
+    parser.add_argument('--lambda_chan_entropy', default=0.0, type=float,
+                        help='weight for DIMM channel entropy regularization (0 disables)')
     parser.add_argument('--neg_sampling', default='label_aware', type=str,
                         choices=['shuffle', 'label_aware', 'low_sim'],
                         help='negative sampling strategy for CID ITM loss')
     parser.add_argument('--tau_schedule_mode', default='epoch', type=str,
                         choices=['step', 'epoch'],
                         help='temperature annealing schedule: step-based (per batch) or epoch-based')
+    parser.add_argument('--use_ema', action='store_true',
+                        help='enable EMA weights for evaluation')
+    parser.add_argument('--ema_decay', default=0.9999, type=float,
+                        help='EMA decay for model parameters')
+    parser.add_argument('--ema_eval_mode', default='ema', type=str,
+                        choices=['raw', 'ema', 'both'],
+                        help='evaluation mode when EMA is enabled')
 
     # Two-stage training parameters
     parser.add_argument('--resume_from', default=None, type=str,
