@@ -1,0 +1,20 @@
+2026-02-01 20:02:24,489 INFO    StreamThr :597065 [internal.py:wandb_internal():91] W&B internal server running at pid: 597065, started at: 2026-02-01 20:02:24.488094
+2026-02-01 20:02:24,492 DEBUG   HandlerThread:597065 [handler.py:handle_request():138] handle_request: status
+2026-02-01 20:02:24,495 DEBUG   SenderThread:597065 [sender.py:send_request():315] send_request: status
+2026-02-01 20:02:24,498 INFO    WriterThread:597065 [datastore.py:open_for_write():75] open: /home/user/2024_cty/RCL_TMD/wandb/offline-run-20260201_200224-3yckaw0g/run-3yckaw0g.wandb
+2026-02-01 20:02:24,525 DEBUG   HandlerThread:597065 [handler.py:handle_request():138] handle_request: run_start
+2026-02-01 20:02:24,540 DEBUG   HandlerThread:597065 [meta.py:__init__():34] meta init
+2026-02-01 20:02:24,540 DEBUG   HandlerThread:597065 [meta.py:__init__():49] meta init done
+2026-02-01 20:02:24,540 DEBUG   HandlerThread:597065 [meta.py:probe():215] probe
+2026-02-01 20:02:24,548 DEBUG   HandlerThread:597065 [meta.py:_setup_git():205] setup git
+2026-02-01 20:02:24,574 DEBUG   HandlerThread:597065 [meta.py:_setup_git():212] setup git done
+2026-02-01 20:02:24,575 DEBUG   HandlerThread:597065 [meta.py:_save_pip():53] save pip
+2026-02-01 20:02:24,575 DEBUG   HandlerThread:597065 [meta.py:_save_pip():67] save pip done
+2026-02-01 20:02:24,575 DEBUG   HandlerThread:597065 [meta.py:_save_conda():74] save conda
+2026-02-01 20:02:27,946 DEBUG   HandlerThread:597065 [meta.py:_save_conda():84] save conda done
+2026-02-01 20:02:27,947 DEBUG   HandlerThread:597065 [meta.py:probe():253] probe done
+2026-02-01 20:02:34,796 DEBUG   HandlerThread:597065 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 20:02:41,251 DEBUG   HandlerThread:597065 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 20:03:20,031 DEBUG   HandlerThread:597065 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 20:03:25,549 INFO    MainThread:597065 [internal.py:handle_exit():78] Internal process exited
+2026-02-01 20:03:25,551 WARNING MsgRouterThr:597065 [router.py:message_loop():74] EOFError seen in message_loop

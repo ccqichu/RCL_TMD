@@ -4045,3 +4045,12 @@
 2026-02-01 19:59:21,500 DEBUG   HandlerThread:338189 [handler.py:handle_request():138] handle_request: partial_history
 2026-02-01 20:00:07,482 DEBUG   HandlerThread:338189 [handler.py:handle_request():138] handle_request: partial_history
 2026-02-01 20:00:07,536 DEBUG   HandlerThread:338189 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 20:00:53,751 DEBUG   HandlerThread:338189 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 20:01:37,692 DEBUG   HandlerThread:338189 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 20:01:37,758 DEBUG   HandlerThread:338189 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 20:01:39,477 DEBUG   HandlerThread:338189 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 20:01:42,301 DEBUG   HandlerThread:338189 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 20:02:17,734 DEBUG   HandlerThread:338189 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 20:02:52,347 DEBUG   HandlerThread:338189 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 20:03:24,724 INFO    MainThread:338189 [internal.py:handle_exit():78] Internal process exited
+2026-02-01 20:03:24,726 WARNING MsgRouterThr:338189 [router.py:message_loop():74] EOFError seen in message_loop

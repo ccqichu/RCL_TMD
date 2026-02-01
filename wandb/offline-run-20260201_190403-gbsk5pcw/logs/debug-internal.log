@@ -4045,3 +4045,17 @@
 2026-02-01 19:59:10,509 DEBUG   HandlerThread:342393 [handler.py:handle_request():138] handle_request: partial_history
 2026-02-01 19:59:56,569 DEBUG   HandlerThread:342393 [handler.py:handle_request():138] handle_request: partial_history
 2026-02-01 19:59:56,673 DEBUG   HandlerThread:342393 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 20:00:43,851 DEBUG   HandlerThread:342393 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 20:01:32,485 DEBUG   HandlerThread:342393 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 20:01:32,549 DEBUG   HandlerThread:342393 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 20:01:34,175 DEBUG   HandlerThread:342393 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 20:01:37,731 DEBUG   HandlerThread:342393 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 20:02:13,355 DEBUG   HandlerThread:342393 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 20:02:48,924 DEBUG   HandlerThread:342393 [handler.py:handle_request():138] handle_request: partial_history
+2026-02-01 20:03:19,816 WARNING StreamThr :342393 [internal.py:is_dead():386] Internal process exiting, parent pid 342080 disappeared
+2026-02-01 20:03:19,816 ERROR   StreamThr :342393 [internal.py:wandb_internal():147] Internal process shutdown.
+2026-02-01 20:03:19,873 INFO    SenderThread:342393 [sender.py:finish():1315] shutting down sender
+2026-02-01 20:03:20,344 INFO    WriterThread:342393 [datastore.py:close():279] close: /home/user/2024_cty/RCL_TMD/wandb/offline-run-20260201_190403-gbsk5pcw/run-gbsk5pcw.wandb
+2026-02-01 20:03:20,345 INFO    HandlerThread:342393 [handler.py:finish():807] shutting down handler
+2026-02-01 20:03:21,289 INFO    MainThread:342393 [internal.py:handle_exit():78] Internal process exited
+2026-02-01 20:03:21,290 WARNING MsgRouterThr:342393 [router.py:message_loop():74] EOFError seen in message_loop

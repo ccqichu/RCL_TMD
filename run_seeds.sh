@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SEEDS="${SEEDS:-"2020 2022 2024 2025 2048"}"
+SEEDS="${SEEDS:-"11 222 333 444 555"}"
 EXTRA_ARGS="${EXTRA_ARGS:-""}"
 OUTDIR="${OUTDIR:-"./seed_runs"}"
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-3}"
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-2}"
 
 # 预设配置：PROFILE=final|clean（默认 final）
 PROFILE="${PROFILE:-final}"
 BASE_ARGS=()
 if [ "$PROFILE" = "clean" ]; then
   BASE_ARGS=(
-    --device 3
+    --device 2
     --num_train_epochs 12
     --learning_rate 3e-4
     --clip_learning_rate 3e-7
