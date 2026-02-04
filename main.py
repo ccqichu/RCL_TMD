@@ -1,5 +1,5 @@
 import os
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 from model import RCLMuFN
 from train import train
 from data_set import MyDataset
@@ -16,9 +16,9 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def set_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--device', default='0', type=str, help='device number')
+    parser.add_argument('--device', default='1', type=str, help='device number')
     parser.add_argument('--model', default='RCLMuFN', type=str, help='the model name', choices=['RCLMuFN'])
-    parser.add_argument('--text_name', default='text_clean', type=str, help='the text data folder name')
+    parser.add_argument('--text_name', default='text_final', type=str, help='the text data folder name')
     parser.add_argument('--simple_linear', default=False, type=bool, help='linear implementation choice')
     parser.add_argument('--num_train_epochs', default=10, type=int, help='number of train epoched')
     parser.add_argument('--train_batch_size', default=32, type=int, help='batch size in train phase')
@@ -37,7 +37,7 @@ def set_args():
     parser.add_argument('--weight_decay', default=0.03, type=float, help='weight decay')
     parser.add_argument('--warmup_proportion', default=0.2, type=float, help='warm up proportion')
     parser.add_argument('--dropout_rate', default=0.1, type=float, help='dropout rate')
-    parser.add_argument('--output_dir', default='../output_dir', type=str, help='the output path')
+    parser.add_argument('--output_dir', default='../output_dir/vis', type=str, help='the output path')
     parser.add_argument('--limit', default=None, type=int, help='the limited number of training examples')
     parser.add_argument('--seed', type=int, default=52, help='random seed')
     parser.add_argument('--lambda_ratio_start', default=0.0, type=float, help='start weight for CID ratio loss')
@@ -53,6 +53,18 @@ def set_args():
     parser.add_argument('--neg_sampling', default='label_aware', type=str,
                         choices=['shuffle', 'label_aware', 'low_sim'],
                         help='negative sampling strategy for CID ITM loss')
+    parser.add_argument('--tau_min', default=0.4, type=float,
+                        help='minimum temperature for CID softmax')
+    parser.add_argument('--tau_decay', default=0.9995, type=float,
+                        help='temperature decay rate for CID softmax')
+    parser.add_argument('--rho', default=0.3, type=float,
+                        help='target ratio for consistent vision patches')
+    parser.add_argument('--rho_t', default=0.5, type=float,
+                        help='target ratio for consistent text tokens')
+    parser.add_argument('--num_heads', default=8, type=int,
+                        help='number of heads for DIMM attention')
+    parser.add_argument('--cid_smooth_beta', default=5.0, type=float,
+                        help='beta for smooth sigmoid scaling in CID masks')
     parser.add_argument('--tau_schedule_mode', default='epoch', type=str,
                         choices=['step', 'epoch'],
                         help='temperature annealing schedule: step-based (per batch) or epoch-based')
@@ -87,8 +99,11 @@ def seed_everything(seed=42):
 def main():
     args = set_args()
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-
-    device = torch.device("cuda" if torch.cuda.is_available() and int(args.device) >= 0 else "cpu")
+    if int(args.device) >= 0:
+        os.environ["CUDA_VISIBLE_DEVICES"] = args.device
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device("cpu")
 
     seed_everything(args.seed)
 
@@ -109,7 +124,7 @@ def main():
 
     if args.model == 'RCLMuFN':
 
-        processor = CLIPProcessor.from_pretrained("/home/user/2024_cty/RCLMuFN-main/src/models/clip-vit-base-patch32")
+        processor = CLIPProcessor.from_pretrained("/home/user/chengtaiyu/models/clip-vit-base-patch32")
         model = RCLMuFN(args)
     else:
         raise RuntimeError('Error model name!')

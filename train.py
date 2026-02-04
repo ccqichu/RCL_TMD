@@ -62,7 +62,7 @@ def _schedule_lambda(start, end, epoch_idx, warmup_epochs, ramp_epochs, schedule
 
 def train(args, model,device, train_data, dev_data, test_data, processor):
     if not os.path.exists(args.output_dir):
-        os.mkdir(args.output_dir)
+        os.makedirs(args.output_dir, exist_ok=True)
 
     train_loader = DataLoader(dataset=train_data,
                               batch_size=args.train_batch_size,
@@ -290,6 +290,25 @@ def train(args, model,device, train_data, dev_data, test_data, processor):
             logging.info("New best test_acc {:.6f} at epoch {}, saved model.".format(max_test_acc, i_epoch))
 
         torch.cuda.empty_cache()
+    # Report CID stats for the best saved model after training.
+    best_path = os.path.join(args.output_dir, args.model, 'model.pt')
+    if os.path.exists(best_path) and os.path.getsize(best_path) > 0:
+        try:
+            model_to_eval = (model.module if hasattr(model, "module") else model)
+            state = torch.load(best_path, map_location=device)
+            model_to_eval.load_state_dict(state, strict=False)
+            cid_stats = evaluate_cid_stats(args, model_to_eval, device, test_data, processor)
+            if cid_stats is not None:
+                logging.info("Best model CID stats: m_t_mean={:.6f}, m_v_mean={:.6f}, m_t_var={:.6f}, m_v_var={:.6f}".format(
+                    cid_stats["m_t_mean"], cid_stats["m_v_mean"], cid_stats["m_t_var"], cid_stats["m_v_var"]))
+                wandb.log({
+                    "best_m_t_mean": cid_stats["m_t_mean"],
+                    "best_m_v_mean": cid_stats["m_v_mean"],
+                    "best_m_t_var": cid_stats["m_t_var"],
+                    "best_m_v_var": cid_stats["m_v_var"],
+                })
+        except (EOFError, RuntimeError, ValueError) as exc:
+            logging.warning(f"Skip CID stats: failed to load best model at {best_path}: {exc}")
     logger.info('Train done')
 
 
@@ -347,3 +366,42 @@ def evaluate_acc_f1(args, model, device, data, processor, macro=False,pre = None
             precision =  metrics.precision_score(t_targets_all.cpu(),t_outputs_all.cpu(), labels=[0, 1],average='macro')
             recall = metrics.recall_score(t_targets_all.cpu(),t_outputs_all.cpu(), labels=[0, 1],average='macro')
         return acc, f1 ,precision,recall
+
+
+def evaluate_cid_stats(args, model, device, data, processor):
+        data_loader = DataLoader(data, batch_size=args.dev_batch_size, collate_fn=MyDataset.collate_func,
+                                 shuffle=False, num_workers=4, pin_memory=True)
+        mt_mean_sum = 0.0
+        mv_mean_sum = 0.0
+        mt_var_sum = 0.0
+        mv_var_sum = 0.0
+        count = 0
+
+        model.eval()
+        with torch.no_grad():
+            for t_batch in data_loader:
+                text_list, image_list, label_list, id_list = t_batch
+                if args.model == 'RCLMuFN':
+                    inputs = processor(text=text_list, images=image_list, padding='max_length',
+                                       truncation=True, max_length=args.max_len, return_tensors="pt").to(device)
+                    labels = torch.tensor(label_list).to(device, non_blocking=True)
+
+                _ = model(inputs, t_batch, labels=labels)
+                if hasattr(model, "last_cid_stats"):
+                    stats = model.last_cid_stats
+                    batch_size = len(label_list)
+                    mt_mean_sum += float(stats["m_t_mean"]) * batch_size
+                    mv_mean_sum += float(stats["m_v_mean"]) * batch_size
+                    mt_var_sum += float(stats["m_t_var"]) * batch_size
+                    mv_var_sum += float(stats["m_v_var"]) * batch_size
+                    count += batch_size
+
+        if count == 0:
+            return None
+        return {
+            "m_t_mean": mt_mean_sum / count,
+            "m_v_mean": mv_mean_sum / count,
+            "m_t_var": mt_var_sum / count,
+            "m_v_var": mv_var_sum / count,
+            "count": count,
+        }

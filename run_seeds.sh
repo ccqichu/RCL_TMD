@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SEEDS="${SEEDS:-"11 222 333 444 555"}"
+SEEDS="${SEEDS:-"128 256 512 1024 2048 2025 2024 2026 3041 3041 3043 2027 2023 2020 2021"}"
 EXTRA_ARGS="${EXTRA_ARGS:-""}"
 OUTDIR="${OUTDIR:-"./seed_runs"}"
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-2}"
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-1}"
 
-# 预设配置：PROFILE=final|clean（默认 final）
-PROFILE="${PROFILE:-final}"
+# 预设配置：PROFILE=final|clean|third（默认 third）
+PROFILE="${PROFILE:-third}"
 BASE_ARGS=()
 if [ "$PROFILE" = "clean" ]; then
   BASE_ARGS=(
-    --device 2
+    --device 1
     --num_train_epochs 12
     --learning_rate 3e-4
     --clip_learning_rate 3e-7
@@ -29,7 +29,7 @@ if [ "$PROFILE" = "clean" ]; then
     --ema_eval_mode both
     --lambda_chan_entropy 1e-4
   )
-else
+elif [ "$PROFILE" = "final" ]; then
   # final / default
   BASE_ARGS=(
     --device 3
@@ -49,6 +49,24 @@ else
     --ema_decay 0.9999
     --ema_eval_mode both
     --lambda_chan_entropy 1e-4
+  )
+else
+  BASE_ARGS=(
+  --num_train_epochs 1 \
+  --lambda_ratio_start 0 \
+  --lambda_itm_start 0 \
+  --lambda_schedule none \
+  --tau_schedule_mode step \
+  --tau_decay 0.99995 \
+  --neg_sampling shuffle \
+  --output_dir /home/user/chengtaiyu/RCLMuFN-main_copy/output_dir/grid \
+  --lambda_ratio_end 0.0001 \
+  --lambda_itm_end 0.0001 \
+  --tau_min 1.2 \
+  --rho 0.7 \
+  --rho_t 0.9 \
+  --cid_smooth_beta 3.0 \
+  --device 1
   )
 fi
 

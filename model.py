@@ -180,7 +180,7 @@ class CIDModule(nn.Module):
 
     def __init__(self, text_dim=512, vision_dim=768, hidden_dim=768,
                  rho=0.3, rho_t=0.5, delta=0.1, tau0=1.0, tau_min=0.4, decay=0.9995,
-                 neg_sampling="label_aware", tau_schedule_mode='step'):
+                 neg_sampling="label_aware", tau_schedule_mode='step', smooth_beta: float = 5.0):
         super(CIDModule, self).__init__()
 
         # Project text from 512 to 768
@@ -196,6 +196,7 @@ class CIDModule(nn.Module):
         self.decay = decay  # temperature decay rate
         self.neg_sampling = neg_sampling
         self.tau_schedule_mode = tau_schedule_mode  # 'step' or 'epoch'
+        self.smooth_beta = smooth_beta
 
         # Temperature annealing: maintain global step/epoch as buffer
         self.register_buffer('global_step', torch.tensor(0, dtype=torch.long))
@@ -287,9 +288,10 @@ class CIDModule(nn.Module):
         s_t = A_tv.max(dim=2).values  # [B, Lt]
         s_t = s_t.masked_fill(pad_mask, -1e4)
         # 5. Soft mask using softmax with scaling
-        # Vision side mask
+        # Vision side mask (smooth scaling)
         p_v = F.softmax(s_v, dim=-1)
-        m_v = torch.clamp(self.rho * Lv * p_v, 0.0, 1.0)  # [B, Lv]
+        m_v_raw = self.rho * Lv * p_v
+        m_v = torch.sigmoid(self.smooth_beta * (m_v_raw - 0.5))  # [B, Lv] in (0,1)
 
         # Text side mask (only for non-padding positions)
         # Count valid tokens per sample
@@ -298,7 +300,8 @@ class CIDModule(nn.Module):
         # m_t = m_t.masked_fill(pad_mask, 0.0)  # Zero out padding
         p_t = F.softmax(s_t, dim=-1)  # [B, Lt]
 
-        m_t = torch.clamp(self.rho_t * valid_counts * p_t, 0.0, 1.0)  # [B, Lt]
+        m_t_raw = self.rho_t * valid_counts * p_t
+        m_t = torch.sigmoid(self.smooth_beta * (m_t_raw - 0.5))  # [B, Lt] in (0,1)
         m_t = m_t * valid  # pad -> 0.0
         # 6. Split into consistent and inconsistent parts
         # Vision side
@@ -598,7 +601,7 @@ class DIMMModule(nn.Module):
 class RCLMuFN(nn.Module):
     def __init__(self, args):
         super(RCLMuFN, self).__init__()
-        self.model = CLIPModel.from_pretrained("/home/user/2024_cty/RCLMuFN-main/src/models/clip-vit-base-patch32")
+        self.model = CLIPModel.from_pretrained("/home/user/chengtaiyu/models/clip-vit-base-patch32")
         if args.simple_linear:
             self.text_linear =  nn.Linear(args.text_size, args.image_size)
             self.image_linear =  nn.Linear(args.image_size, args.image_size)
@@ -657,18 +660,19 @@ class RCLMuFN(nn.Module):
             text_dim=512,
             vision_dim=768,
             hidden_dim=768,
-            rho=0.3,
-            rho_t=0.5,
+            rho=getattr(args, 'rho', 0.3),
+            rho_t=getattr(args, 'rho_t', 0.5),
             delta=0.1,
             tau0=1.0,
-            tau_min=0.4,
-            decay=0.9995,
+            tau_min=getattr(args, 'tau_min', 0.4),
+            decay=getattr(args, 'tau_decay', 0.9995),
             neg_sampling=args.neg_sampling,
-            tau_schedule_mode=getattr(args, 'tau_schedule_mode', 'step')  # 'step' or 'epoch'
+            tau_schedule_mode=getattr(args, 'tau_schedule_mode', 'step'),
+            smooth_beta=getattr(args, 'cid_smooth_beta', 5.0)  # smooth clamp strength
         )
         self.dimm = DIMMModule(
             hidden_dim=768,
-            num_heads=8,
+            num_heads=getattr(args, 'num_heads', 8),
             dropout=0.1
         )
 
